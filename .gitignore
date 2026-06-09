@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+
+# JS/Node
+node_modules/
+web/dist/
+
+# Secrets / local config
+.env.local
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.DS_Store
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Internal docs — not for the public repo
+docs/FrontendReferences/
+docs/InitialSetup/RITHM_Phase1_DesignDoc-2.md

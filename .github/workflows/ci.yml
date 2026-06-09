@@ -1,0 +1,15 @@
+# CI workflow stub — full version lands on Day 3 (see docs/RITHM_Days1to5_CodeSpec.md).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    name: CI placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "CI stub — full pipeline lands on Day 3"

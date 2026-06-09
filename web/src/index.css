@@ -1,0 +1,406 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    --brand-rgb: 108, 92, 231;
+  }
+
+  html {
+    height: 100%;
+  }
+
+  body {
+    @apply min-h-full bg-void font-sans text-ink antialiased;
+    overflow-x: hidden;
+  }
+
+  /*
+    Ambient colour field — three overlapping blobs that the glass card blurs
+    and refracts. Deliberately asymmetric for organic depth.
+  */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 75% 65% at 15% 8%, rgba(72, 52, 210, 0.38) 0%, transparent 60%),
+      radial-gradient(ellipse 55% 70% at 82% 88%, rgba(28, 55, 215, 0.24) 0%, transparent 55%),
+      radial-gradient(ellipse 50% 55% at 62% 28%, rgba(145, 48, 205, 0.2) 0%, transparent 52%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #root {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 100dvh;
+    padding: 32px 20px;
+  }
+}
+
+/* ── Glass primitives ───────────────────────────────────────────────────── */
+@layer components {
+  /* Frosted glass card with specular rim + internal light gradient */
+  .glass-card {
+    @apply relative w-full max-w-[400px] overflow-hidden rounded-card border border-white/10;
+    background: rgba(10, 10, 20, 0.42);
+    backdrop-filter: blur(56px) saturate(190%) brightness(1.06);
+    -webkit-backdrop-filter: blur(56px) saturate(190%) brightness(1.06);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+      0 4px 6px rgba(0, 0, 0, 0.22),
+      0 14px 32px rgba(0, 0, 0, 0.38),
+      0 44px 88px rgba(0, 0, 0, 0.42),
+      0 0 130px rgba(var(--brand-rgb), 0.09);
+  }
+
+  /* Bright specular line on the top rim, fading at both ends */
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 8%;
+    right: 8%;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.2) 15%,
+      rgba(255, 255, 255, 0.58) 36%,
+      rgba(255, 255, 255, 0.7) 50%,
+      rgba(255, 255, 255, 0.58) 64%,
+      rgba(255, 255, 255, 0.2) 85%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+
+  /* Internal reflection — lighter near top-left, subtly darker at bottom */
+  .glass-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.045) 0%,
+      transparent 45%,
+      rgba(0, 0, 0, 0.06) 100%
+    );
+    pointer-events: none;
+  }
+
+  /* Recessed glass input */
+  .glass-input {
+    @apply w-full rounded-el border border-white/10 px-3.5 py-3 text-[14.5px] font-normal text-ink outline-none transition duration-150;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow:
+      inset 0 1px 4px rgba(0, 0, 0, 0.42),
+      inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+
+  .glass-input::placeholder {
+    @apply text-ink-faint;
+  }
+
+  .glass-input:focus {
+    border-color: rgba(var(--brand-rgb), 0.52);
+    background: rgba(255, 255, 255, 0.065);
+    box-shadow:
+      inset 0 1px 4px rgba(0, 0, 0, 0.3),
+      0 0 0 3.5px rgba(var(--brand-rgb), 0.15);
+  }
+
+  /* Primary button — brand gradient with bloom */
+  .btn-primary {
+    @apply flex w-full items-center justify-center rounded-el px-4 py-3 text-[14.5px] font-semibold text-white/95 transition-all duration-150;
+    background: linear-gradient(158deg, rgba(122, 104, 252, 0.92) 0%, rgba(90, 66, 218, 0.96) 100%);
+    border: 1px solid rgba(162, 150, 255, 0.24);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+      0 4px 16px rgba(var(--brand-rgb), 0.42),
+      0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    opacity: 0.92;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 6px 24px rgba(var(--brand-rgb), 0.52),
+      0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0.5px);
+    opacity: 0.85;
+  }
+
+  .btn-primary:disabled {
+    @apply cursor-not-allowed opacity-30;
+    transform: none;
+  }
+
+  /* Secondary / ghost button */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-[10px] border border-white/10 px-[22px] py-2.5 text-[13.5px] font-medium text-ink-muted transition-colors duration-150;
+    background: rgba(255, 255, 255, 0.055);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  }
+
+  .btn-secondary:hover {
+    @apply text-ink;
+    background: rgba(255, 255, 255, 0.09);
+  }
+
+  /* Brand wordmark */
+  .wordmark {
+    @apply block text-[11.5px] font-bold uppercase tracking-wordmark text-white/90;
+  }
+
+  /* Dummy social sign-in button (icon-only, ghost glass) */
+  .btn-social {
+    @apply flex h-11 flex-1 items-center justify-center rounded-el border border-white/10 transition-colors duration-150;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .btn-social:hover {
+    background: rgba(255, 255, 255, 0.085);
+  }
+
+  /* Oversized hero wordmark for the login split layout */
+  .wordmark-hero {
+    @apply bg-gradient-to-br from-white to-brand-soft bg-clip-text font-display font-normal leading-none text-transparent;
+    font-size: clamp(48px, 8vw, 92px);
+    letter-spacing: 0.1em;
+  }
+
+  /* ── App shell ──────────────────────────────────────────────────────────── */
+
+  /* Studio background — dark void + a faint dot matrix + soft brand vignette */
+  .app-bg {
+    background-color: var(--bg, #06060e);
+    background-image:
+      radial-gradient(circle at 50% 0%, rgba(var(--brand-rgb), 0.08) 0%, transparent 55%),
+      radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      22px 22px;
+    background-position:
+      center top,
+      -11px -11px;
+  }
+
+  /*
+    General-purpose glass surface (sidebar rail, quick-gen inner box). Same glass
+    language as .glass-card but without the fixed max-width or specular rim.
+  */
+  .glass-panel {
+    @apply rounded-card border border-white/10;
+    background: rgba(10, 10, 20, 0.42);
+    backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
+    -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 10px 30px rgba(0, 0, 0, 0.35),
+      0 0 60px rgba(var(--brand-rgb), 0.05);
+  }
+}
+
+/* ── AI "breathing" border ────────────────────────────────────────────────
+   A multi-hue conic gradient that slowly rotates (--ai-angle) and pulses opacity
+   (breathe), signalling the quick-gen box is AI-powered. @property makes the
+   conic angle animatable; where unsupported (older Firefox) the rotation no-ops
+   but the opacity breathe still runs. */
+@property --ai-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes ai-spin {
+  to {
+    --ai-angle: 360deg;
+  }
+}
+
+@keyframes ai-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+.ai-frame {
+  position: relative;
+  border-radius: 24px;
+}
+
+/* Crisp gradient border via mask-composite */
+.ai-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--ai-angle),
+    #6c5cff,
+    #4cc9f0,
+    #b16cff,
+    #ff6ec7,
+    #6c5cff
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Blurred halo bleeding out from behind the panel edges */
+.ai-frame::after {
+  content: "";
+  position: absolute;
+  inset: -11px;
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--ai-angle),
+    #6c5cff,
+    #4cc9f0,
+    #b16cff,
+    #ff6ec7,
+    #6c5cff
+  );
+  filter: blur(26px);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ai-frame::before {
+    animation:
+      ai-spin 7s linear infinite,
+      ai-breathe 4.5s ease-in-out infinite;
+  }
+  .ai-frame::after {
+    animation:
+      ai-spin 7s linear infinite,
+      ai-breathe 4.5s ease-in-out infinite;
+  }
+}
+
+/* Subtler sibling of .ai-frame — used by the Pro toggle pill */
+.ai-frame-soft {
+  position: relative;
+  border-radius: 999px;
+}
+
+.ai-frame-soft::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--ai-angle),
+    #6c5cff,
+    #4cc9f0,
+    #b16cff,
+    #ff6ec7,
+    #6c5cff
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.ai-frame-soft::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--ai-angle),
+    #6c5cff,
+    #4cc9f0,
+    #b16cff,
+    #ff6ec7,
+    #6c5cff
+  );
+  filter: blur(13px);
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ai-frame-soft::before {
+    animation:
+      ai-spin 9s linear infinite,
+      ai-breathe 5s ease-in-out infinite;
+  }
+  .ai-frame-soft::after {
+    animation:
+      ai-spin 9s linear infinite,
+      ai-breathe 5s ease-in-out infinite;
+  }
+}
+
+/*
+  Near-opaque dark glass interior for the quick-gen box. Keeps the inside reading
+  as glass (not glowing) while the conic border + perimeter halo do the glowing;
+  the slight transparency lets a touch of that glow seep behind the prompt.
+*/
+.quick-surface {
+  position: relative;
+  border-radius: 22px;
+  background: rgba(9, 9, 15, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 18px 40px -28px rgba(var(--brand-rgb), 0.5);
+}
+
+/* Living multi-hue text fill (for the word "quick") */
+@keyframes ai-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.text-ai {
+  background: linear-gradient(90deg, #7a68fc, #4cc9f0, #b16cff, #ff6ec7, #7a68fc);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .text-ai {
+    animation: ai-flow 6s linear infinite;
+  }
+}

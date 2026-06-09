@@ -1,0 +1,12 @@
+# Deploy workflow stub — full version lands on Day 3 (see docs/RITHM_Days1to5_CodeSpec.md).
+name: Deploy Web
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    name: Deploy Web placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "deploy-web stub — full pipeline lands on Day 3"

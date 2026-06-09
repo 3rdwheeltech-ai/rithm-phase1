@@ -1,0 +1,48 @@
+[project]
+name = "rithm-worker"
+version = "0.1.0"
+requires-python = ">=3.11"        # 3.11 for best PyTorch 2.3 compat
+dependencies = [
+    "structlog>=24.1",
+    "boto3>=1.34",
+    "sqlalchemy>=2.0",            # sync only — worker is not async
+    "psycopg2-binary>=2.9",
+    "pydantic-settings>=2.3",
+    "uuid-utils>=0.9",
+]
+
+# GPU deps are an optional group so CI can install without CUDA
+[dependency-groups]
+gpu = [
+    "torch>=2.3",
+    "torchaudio>=2.3",
+    # "transformers>=4.41",       # uncomment when ACE-Step API is confirmed
+    # "accelerate>=0.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["worker"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+    "pyright>=1.1",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchaudio = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["gpu: requires NVIDIA GPU (skip in CI)"]

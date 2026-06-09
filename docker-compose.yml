@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    ports:
+      - "5433:5432"   # 5433 on host: a host-level Postgres already owns localhost:5432
+    environment:
+      POSTGRES_DB: rithm-dev
+      POSTGRES_USER: rithm_admin
+      POSTGRES_PASSWORD: dev_admin_pw_change_me
+    volumes:
+      - rithm_pgdata:/var/lib/postgresql/data
+      - ./ops/db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rithm_admin -d rithm-dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  localstack:
+    image: localstack/localstack:3
+    restart: unless-stopped
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs,sns,s3
+      DEFAULT_REGION: us-east-1
+      EAGER_SERVICE_LOADING: 1
+    volumes:
+      - localstackdata:/var/lib/localstack
+      - ./ops/scripts/init-localstack.sh:/etc/localstack/init/ready.d/10-init-resources.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:4566/_localstack/health | grep -q '\"sqs\": \"running\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      target: development
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.local             # gitignored; copy from .env.example
+    environment:
+      # Override for local docker-compose networking
+      AWS_ENDPOINT_URL: http://localstack:4566
+      # AWS creds come from .env.local (real rithm-dev keys — needed for
+      # Cognito AdminConfirmSignUp; LocalStack accepts any values).
+      AWS_DEFAULT_REGION: us-east-1
+      DB_IDENTITY_DSN: postgresql+asyncpg://rithm_identity:dev_identity_pw@postgres:5432/rithm-dev
+      DB_CATALOG_DSN: postgresql+asyncpg://rithm_catalog:dev_catalog_pw@postgres:5432/rithm-dev
+      DB_GENERATION_DSN: postgresql+asyncpg://rithm_generation:dev_generation_pw@postgres:5432/rithm-dev
+      DB_CONVERSATION_DSN: postgresql+asyncpg://rithm_conversation:dev_conversation_pw@postgres:5432/rithm-dev
+      DB_PERSONALIZATION_DSN: postgresql+asyncpg://rithm_personalization:dev_personalization_pw@postgres:5432/rithm-dev
+      ASSETS_BUCKET: rithm-assets-local
+      SQS_JOBS_QUEUE_URL: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/rithm-generation-jobs
+      SNS_COMPLETIONS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:rithm-job-completions
+      ENVIRONMENT: local
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./api/app:/app/app     # hot-reload in dev only (target: development)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # ── Worker is intentionally NOT in docker-compose ──────────────────────────
+  # The worker requires a GPU (NVIDIA T4/A10G) and runs on EC2 spot.
+  # Local testing of the generation pipeline uses a dev shortcut:
+  # a fake SNS completion message posted via the ops/scripts/fake-complete-job.sh script.
+
+volumes:
+  rithm_pgdata:
+  localstackdata:

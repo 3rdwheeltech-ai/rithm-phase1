@@ -1,0 +1,5 @@
+# docker-compose.test.yml — placeholder.
+# Test-environment compose configuration lands on a later day
+# (see docs/RITHM_Days1to5_CodeSpec.md).
+version: "3.9"
+services: {}
