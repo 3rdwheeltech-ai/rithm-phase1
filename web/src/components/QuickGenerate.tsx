@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, ChevronDown, Plus, Check, Music } from "lucide-react";
+import { ChevronDown, Plus, Check, Music } from "lucide-react";
+import { useGeneration } from "../store/generation";
 
 interface SampleLyric {
   id: string;
@@ -31,9 +32,12 @@ export default function QuickGenerate() {
   const [lyric, setLyric] = useState<Lyric>({ kind: "none" });
   const [customLyric, setCustomLyric] = useState("");
   const [open, setOpen] = useState(false);
-  const [note, setNote] = useState(false);
+
+  const { start, status, error } = useGeneration();
+  const busy = status === "generating";
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -49,17 +53,28 @@ export default function QuickGenerate() {
 
   const canGenerate = prompt.trim().length > 0;
 
+  function onGenerate() {
+    if (busy) return;
+    if (!canGenerate) {
+      promptRef.current?.focus(); // nudge the user to describe a track first
+      return;
+    }
+    const lyrics =
+      lyric.kind === "custom" ? customLyric
+      : lyric.kind === "preview" ? lyric.excerpt
+      : "";
+    void start({ prompt: prompt.trim(), lyrics });
+  }
+
   return (
     <div className="animate-rise">
       <div className="ai-frame">
         <div className="quick-surface p-5">
           {/* Prompt */}
           <textarea
+            ref={promptRef}
             value={prompt}
-            onChange={(e) => {
-              setPrompt(e.target.value);
-              if (note) setNote(false);
-            }}
+            onChange={(e) => setPrompt(e.target.value)}
             placeholder="Describe the music you want to create… e.g. dreamy lo-fi with warm piano and soft rain"
             className="min-h-[92px] w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
           />
@@ -138,18 +153,18 @@ export default function QuickGenerate() {
 
           {/* Generate — wide, centered */}
           <div className="mt-5 flex flex-col items-center gap-2">
-            <button
-              type="button"
-              disabled={!canGenerate}
-              onClick={() => setNote(true)}
-              className="inline-flex w-full max-w-[340px] items-center justify-center gap-2 rounded-el bg-[linear-gradient(135deg,#7a68fc_0%,#9d4edd_55%,#4cc9f0_140%)] px-6 py-3 text-[14.5px] font-semibold text-white shadow-[0_4px_22px_rgba(108,92,231,0.45)] transition-all hover:-translate-y-px hover:shadow-[0_6px_28px_rgba(108,92,231,0.55)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:translate-y-0"
-            >
-              <Sparkles className="h-4 w-4" strokeWidth={2} />
-              Generate
-            </button>
-            {note && (
-              <span className="text-[12.5px] text-ink-faint">Generation arrives in the next phase.</span>
-            )}
+            <div className={`w-full max-w-[340px] ${busy ? "" : "ai-frame-btn"}`}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onGenerate}
+                aria-disabled={!canGenerate}
+                className="glass-btn glass-btn-solid w-full rounded-el px-6 py-3 text-[14.5px] font-semibold"
+              >
+                {busy ? "Generating…" : "Generate"}
+              </button>
+            </div>
+            {error && <span className="text-[12.5px] text-red-300">{error}</span>}
           </div>
         </div>
       </div>
@@ -160,10 +175,7 @@ export default function QuickGenerate() {
           <button
             key={s}
             type="button"
-            onClick={() => {
-              setPrompt(s);
-              setNote(false);
-            }}
+            onClick={() => setPrompt(s)}
             className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] py-1.5 pl-3 pr-3.5 text-[12.5px] text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
           >
             <Music className="h-3.5 w-3.5 flex-shrink-0 text-brand-soft" strokeWidth={1.75} />

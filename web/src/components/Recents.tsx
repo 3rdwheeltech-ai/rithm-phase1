@@ -1,16 +1,6 @@
 import { Play, ArrowUpRight } from "lucide-react";
-
-interface Track {
-  id: string;
-  title: string;
-}
-
-// Mock recently-generated tracks — real history arrives with the Phase 2 backend.
-const RECENTS: Track[] = [
-  { id: "neon-rain", title: "Neon Rain" },
-  { id: "golden-hour", title: "Golden Hour" },
-  { id: "paper-planes", title: "Paper Planes" },
-];
+import { useNavigate } from "react-router-dom";
+import { useGeneration } from "../store/generation";
 
 function WaveBars() {
   return (
@@ -24,6 +14,13 @@ function WaveBars() {
 }
 
 export default function Recents() {
+  const nav = useNavigate();
+  const history = useGeneration((s) => s.history);
+  const current = useGeneration((s) => s.current);
+  const setCurrent = useGeneration((s) => s.setCurrent);
+
+  const items = history.slice(0, 3);
+
   return (
     <div className="glass-panel mt-4 px-4 py-3.5">
       <div className="flex items-center gap-4">
@@ -31,32 +28,47 @@ export default function Recents() {
           Recents
         </span>
 
-        <div className="flex flex-1 gap-2.5">
-          {RECENTS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              title={t.title}
-              className="group/card flex min-w-0 flex-1 items-center gap-2.5 rounded-el border border-white/[0.07] bg-white/[0.03] px-3 py-2 text-left transition-colors hover:border-white/15 hover:bg-white/[0.07]"
-            >
-              <span className="relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand-soft">
-                <span className="transition-opacity group-hover/card:opacity-0">
-                  <WaveBars />
-                </span>
-                <Play
-                  className="absolute h-4 w-4 opacity-0 transition-opacity group-hover/card:opacity-100"
-                  strokeWidth={2}
-                  fill="currentColor"
-                />
-              </span>
-              <span className="truncate text-[13px] font-medium text-ink">{t.title}</span>
-            </button>
-          ))}
-        </div>
+        {items.length > 0 ? (
+          <div className="flex flex-1 gap-2.5">
+            {items.map((t) => {
+              const active = current?.id === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  title={`Play ${t.title}`}
+                  onClick={() => setCurrent(t)}
+                  className={`group/card flex min-w-0 flex-1 items-center gap-2.5 rounded-el border px-3 py-2 text-left transition-colors ${
+                    active
+                      ? "border-brand/30 bg-brand/15"
+                      : "border-white/[0.07] bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.07]"
+                  }`}
+                >
+                  <span className="relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand-soft">
+                    <span className="transition-opacity group-hover/card:opacity-0">
+                      <WaveBars />
+                    </span>
+                    <Play
+                      className="absolute h-4 w-4 opacity-0 transition-opacity group-hover/card:opacity-100"
+                      strokeWidth={2}
+                      fill="currentColor"
+                    />
+                  </span>
+                  <span className="truncate text-[13px] font-medium text-ink">{t.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="flex-1 text-[13px] text-ink-faint">
+            Generate a track to get started — it'll show up here.
+          </p>
+        )}
 
         <button
           type="button"
-          title="Coming soon"
+          onClick={() => nav("/library")}
+          title="Open Library"
           className="flex flex-shrink-0 items-center gap-1 rounded-el px-2.5 py-1.5 text-[13px] font-medium text-ink-muted transition-colors hover:text-ink"
         >
           Library

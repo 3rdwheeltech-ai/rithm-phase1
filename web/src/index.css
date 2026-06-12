@@ -176,6 +176,71 @@
     background: rgba(255, 255, 255, 0.085);
   }
 
+  /*
+    Liquid-glass button — translucent frosted surface with a little depth
+    (specular top rim + recessed bottom). Radius is left to utility classes so
+    it works for both pills and circles. Pair with .glass-btn-ring for an accent
+    outline, or wrap in .ai-frame-btn for the breathing AI outline.
+  */
+  .glass-btn {
+    @apply relative inline-flex items-center justify-center text-white transition-all duration-150;
+    background: rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -2px 6px rgba(0, 0, 0, 0.28),
+      0 4px 14px rgba(0, 0, 0, 0.3);
+  }
+
+  .glass-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.11);
+    transform: translateY(-1px);
+  }
+
+  .glass-btn:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+
+  .glass-btn:disabled {
+    @apply cursor-not-allowed opacity-30;
+    transform: none;
+  }
+
+  /* Accent ring — only the outline carries the brand colour (play button) */
+  .glass-btn-ring {
+    border-color: rgba(var(--brand-rgb), 0.7);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 0 12px rgba(var(--brand-rgb), 0.22),
+      0 0 0 1px rgba(var(--brand-rgb), 0.32),
+      0 4px 16px rgba(var(--brand-rgb), 0.26);
+  }
+
+  .glass-btn-ring:hover:not(:disabled) {
+    border-color: rgba(var(--brand-rgb), 0.95);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.26),
+      inset 0 0 16px rgba(var(--brand-rgb), 0.3),
+      0 0 0 1px rgba(var(--brand-rgb), 0.45),
+      0 6px 22px rgba(var(--brand-rgb), 0.34);
+  }
+
+  /*
+    Near-opaque dark interior — use when a .glass-btn sits inside .ai-frame-btn so
+    the breathing halo only glows on the outline, not through the whole button.
+    Same idea as .quick-surface for the quick-gen box.
+  */
+  .glass-btn-solid {
+    background: rgba(11, 11, 18, 0.92);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-btn-solid:hover:not(:disabled) {
+    background: rgba(20, 20, 30, 0.94);
+  }
+
   /* Oversized hero wordmark for the login split layout */
   .wordmark-hero {
     @apply bg-gradient-to-br from-white to-brand-soft bg-clip-text font-display font-normal leading-none text-transparent;
@@ -235,10 +300,10 @@
 @keyframes ai-breathe {
   0%,
   100% {
-    opacity: 0.45;
+    opacity: 0.4;
   }
   50% {
-    opacity: 0.95;
+    opacity: 0.6;
   }
 }
 
@@ -274,7 +339,7 @@
 .ai-frame::after {
   content: "";
   position: absolute;
-  inset: -11px;
+  inset: -7px;
   z-index: -1;
   border-radius: inherit;
   background: conic-gradient(
@@ -285,8 +350,8 @@
     #ff6ec7,
     #6c5cff
   );
-  filter: blur(26px);
-  opacity: 0.28;
+  filter: blur(16px);
+  opacity: 0.2;
   pointer-events: none;
 }
 
@@ -365,6 +430,57 @@
 }
 
 /*
+  Breathing conic outline sized for a pill/button (sibling of .ai-frame). Wrap a
+  .glass-btn in this to give it the same rotating, pulsing AI border as the
+  quick-gen box. Radius matches .rounded-el so the border hugs the button.
+*/
+.ai-frame-btn {
+  position: relative;
+  border-radius: 12px;
+}
+
+.ai-frame-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--ai-angle), #6c5cff, #4cc9f0, #b16cff, #ff6ec7, #6c5cff);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ai-frame-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(from var(--ai-angle), #6c5cff, #4cc9f0, #b16cff, #ff6ec7, #6c5cff);
+  filter: blur(16px);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ai-frame-btn::before {
+    animation:
+      ai-spin 7s linear infinite,
+      ai-breathe 4.5s ease-in-out infinite;
+  }
+  .ai-frame-btn::after {
+    animation:
+      ai-spin 7s linear infinite,
+      ai-breathe 4.5s ease-in-out infinite;
+  }
+}
+
+/*
   Near-opaque dark glass interior for the quick-gen box. Keeps the inside reading
   as glass (not glowing) while the conic border + perimeter halo do the glowing;
   the slight transparency lets a touch of that glow seep behind the prompt.
@@ -378,7 +494,36 @@
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    inset 0 18px 40px -28px rgba(var(--brand-rgb), 0.5);
+    inset 0 18px 40px -28px rgba(var(--brand-rgb), 0.28);
+}
+
+/*
+  Indeterminate progress bar — a brand-tinted highlight that sweeps left→right.
+  Used by the "composing" overlay where the model gives no real percentage.
+*/
+@keyframes progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.progress-sweep {
+  width: 33%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(var(--brand-rgb), 0.9) 50%,
+    transparent 100%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .progress-sweep {
+    animation: progress-sweep 1.4s ease-in-out infinite;
+  }
 }
 
 /* Living multi-hue text fill (for the word "quick") */
