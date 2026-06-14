@@ -147,6 +147,87 @@ export default function CreateForm() {
     void start(params);
   }
 
+  // Primary inputs — shared by both layouts (left column when Advanced).
+  const lyricsSection = (
+    <section className="mb-5">
+      <div className="mb-2.5 flex items-center justify-between">
+        <span className={SECTION_LABEL}>Lyrics</span>
+        <Segmented<LyricTab>
+          ariaLabel="Lyric mode"
+          size="sm"
+          value={lyricTab}
+          onChange={setLyricTab}
+          options={[
+            { value: "write", label: "Write" },
+            { value: "prompt", label: "Prompt" },
+            { value: "instrumental", label: "Instrumental" },
+          ]}
+        />
+      </div>
+
+      {lyricTab === "write" && (
+        <textarea
+          value={lyrics}
+          onChange={(e) => setLyrics(e.target.value)}
+          placeholder="Write your own lyrics, or use the tabs to let RITHM draft them…"
+          className="glass-input min-h-[120px] resize-none leading-relaxed"
+        />
+      )}
+      {lyricTab === "prompt" && (
+        <>
+          <textarea
+            value={lyricPrompt}
+            onChange={(e) => setLyricPrompt(e.target.value)}
+            placeholder="Describe what the song is about and RITHM will write the lyrics…"
+            className="glass-input min-h-[120px] resize-none leading-relaxed"
+          />
+          {advanced && !thinking && (
+            <p className="mt-2 text-[12px] text-amber-300/80">
+              Turn on Thinking for RITHM to draft lyrics from your description.
+            </p>
+          )}
+        </>
+      )}
+      {lyricTab === "instrumental" && (
+        <p className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-[13px] text-ink-faint">
+          Instrumental — no lyrics. RITHM will compose music only.
+        </p>
+      )}
+    </section>
+  );
+
+  const stylesSection = (
+    <section className="mb-5">
+      <span className={SECTION_LABEL}>Styles</span>
+      <textarea
+        value={styles}
+        onChange={(e) => setStyles(e.target.value)}
+        placeholder="e.g. opera metal, hard-hitting drums, powerful male voice, cinematic build…"
+        className="glass-input mt-2.5 min-h-[72px] resize-none leading-relaxed"
+      />
+      <div className="mt-3 flex flex-wrap gap-2">
+        {GENRES.map((g) => {
+          const active = genres.includes(g);
+          return (
+            <button
+              key={g}
+              type="button"
+              onClick={() => toggleGenre(g)}
+              aria-pressed={active}
+              className={`rounded-full border px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
+                active
+                  ? "border-brand/25 bg-brand/15 text-ink"
+                  : "border-white/10 bg-white/[0.035] text-ink-muted hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
+              }`}
+            >
+              {g}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+
   return (
     <div ref={cardRef} className="glass-panel w-full p-6">
       {/* Top bar: Simple / Advanced */}
@@ -163,124 +244,58 @@ export default function CreateForm() {
         />
       </div>
 
-      {/* Lyrics */}
-      <section className="mb-5">
-        <div className="mb-2.5 flex items-center justify-between">
-          <span className={SECTION_LABEL}>Lyrics</span>
-          <Segmented<LyricTab>
-            ariaLabel="Lyric mode"
-            size="sm"
-            value={lyricTab}
-            onChange={setLyricTab}
-            options={[
-              { value: "write", label: "Write" },
-              { value: "prompt", label: "Prompt" },
-              { value: "instrumental", label: "Instrumental" },
-            ]}
-          />
-        </div>
+      {advanced ? (
+        /* Advanced: inputs + sliders on the left, settings rail on the right.
+           Becomes two columns once the box is wide enough (container query). */
+        <div className="create-cq mb-6 animate-fade-in">
+          <div className="create-cols">
+            {/* LEFT — primary inputs + sliders */}
+            <div className="min-w-0">
+              {lyricsSection}
+              {stylesSection}
 
-        {lyricTab === "write" && (
-          <textarea
-            value={lyrics}
-            onChange={(e) => setLyrics(e.target.value)}
-            placeholder="Write your own lyrics, or use the tabs to let RITHM draft them…"
-            className="glass-input min-h-[120px] resize-none leading-relaxed"
-          />
-        )}
-        {lyricTab === "prompt" && (
-          <>
-            <textarea
-              value={lyricPrompt}
-              onChange={(e) => setLyricPrompt(e.target.value)}
-              placeholder="Describe what the song is about and RITHM will write the lyrics…"
-              className="glass-input min-h-[120px] resize-none leading-relaxed"
-            />
-            {advanced && !thinking && (
-              <p className="mt-2 text-[12px] text-amber-300/80">
-                Turn on Thinking for RITHM to draft lyrics from your description.
-              </p>
-            )}
-          </>
-        )}
-        {lyricTab === "instrumental" && (
-          <p className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-[13px] text-ink-faint">
-            Instrumental — no lyrics. RITHM will compose music only.
-          </p>
-        )}
-      </section>
+              <span className={SECTION_LABEL}>More Options</span>
+              <div className="mt-3 space-y-5 rounded-el border border-white/[0.07] bg-white/[0.02] p-4">
+                {/* Thinking — headline switch */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-ink">Thinking</p>
+                    <p className="mt-0.5 text-[12px] leading-snug text-ink-faint">
+                      5Hz LM enhances quality, drafts lyrics in Prompt mode, and fills any blanks below.
+                    </p>
+                  </div>
+                  <Switch checked={thinking} onChange={setThinking} ariaLabel="Thinking" />
+                </div>
 
-      {/* Styles */}
-      <section className="mb-5">
-        <span className={SECTION_LABEL}>Styles</span>
-        <textarea
-          value={styles}
-          onChange={(e) => setStyles(e.target.value)}
-          placeholder="e.g. opera metal, hard-hitting drums, powerful male voice, cinematic build…"
-          className="glass-input mt-2.5 min-h-[72px] resize-none leading-relaxed"
-        />
-        <div className="mt-3 flex flex-wrap gap-2">
-          {GENRES.map((g) => {
-            const active = genres.includes(g);
-            return (
-              <button
-                key={g}
-                type="button"
-                onClick={() => toggleGenre(g)}
-                aria-pressed={active}
-                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
-                  active
-                    ? "border-brand/25 bg-brand/15 text-ink"
-                    : "border-white/10 bg-white/[0.035] text-ink-muted hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
-                }`}
-              >
-                {g}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+                <div className="h-px bg-white/[0.06]" />
 
-      {/* More options (advanced) */}
-      {advanced && (
-        <section className="mb-6 animate-fade-in">
-          <span className={SECTION_LABEL}>More Options</span>
+                {/* Duration */}
+                <TickSlider
+                  label="Duration"
+                  value={duration}
+                  onChange={setDuration}
+                  min={30}
+                  max={240}
+                  step={10}
+                  format={fmtDuration}
+                  tooltip="How long the generated track will be."
+                />
 
-          <div className="mt-3 space-y-5 rounded-el border border-white/[0.07] bg-white/[0.02] p-4">
-            {/* Thinking — headline switch */}
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-ink">Thinking</p>
-                <p className="mt-0.5 text-[12px] leading-snug text-ink-faint">
-                  5Hz LM enhances quality, drafts lyrics in Prompt mode, and fills any blanks below.
-                </p>
+                {/* Creativity → lm_temperature (only meaningful with Thinking) */}
+                <TickSlider
+                  label="Creativity"
+                  value={creativity}
+                  onChange={setCreativity}
+                  disabled={!thinking}
+                  tooltip="Higher values let the model take more risks."
+                />
               </div>
-              <Switch checked={thinking} onChange={setThinking} ariaLabel="Thinking" />
             </div>
 
-            <div className="h-px bg-white/[0.06]" />
+            {/* RIGHT — track settings rail */}
+            <aside className="create-aside mt-5 space-y-4 rounded-el border border-white/[0.07] bg-white/[0.02] p-4">
+              <span className={SECTION_LABEL}>Track Settings</span>
 
-            {/* Duration */}
-            <TickSlider
-              label="Duration"
-              value={duration}
-              onChange={setDuration}
-              min={30}
-              max={240}
-              step={10}
-              format={fmtDuration}
-            />
-
-            {/* Creativity → lm_temperature (only meaningful with Thinking) */}
-            <TickSlider
-              label="Creativity"
-              value={creativity}
-              onChange={setCreativity}
-              disabled={!thinking}
-            />
-
-            {/* 2-col attribute grid */}
-            <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
               {/* Language */}
               <div>
                 <span className={FIELD_LABEL}>Language</span>
@@ -333,6 +348,7 @@ export default function CreateForm() {
                     step={1}
                     format={(v) => `${v} BPM`}
                     disabled={tempoAuto}
+                    tooltip="Beats per minute — the track's tempo."
                   />
                 </div>
               </div>
@@ -383,20 +399,25 @@ export default function CreateForm() {
                   className="glass-input mt-1.5 tabular-nums disabled:opacity-40"
                 />
               </div>
-            </div>
-          </div>
 
-          {/* Song title */}
-          <div className="mt-4">
-            <span className={SECTION_LABEL}>Song Title</span>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Optional — names the track in your Library"
-              className="glass-input mt-2.5"
-            />
+              {/* Song title */}
+              <div>
+                <span className={FIELD_LABEL}>Song Title</span>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Optional — names the track in your Library"
+                  className="glass-input mt-1.5"
+                />
+              </div>
+            </aside>
           </div>
-        </section>
+        </div>
+      ) : (
+        <>
+          {lyricsSection}
+          {stylesSection}
+        </>
       )}
 
       {/* Create */}

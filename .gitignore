@@ -29,5 +29,8 @@ playwright-report/
 test-results/
 
 # Internal docs — not for the public repo
-docs/FrontendReferences/
 docs/InitialSetup/RITHM_Phase1_DesignDoc-2.md
+
+
+#others
+*.png

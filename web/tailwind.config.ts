@@ -12,8 +12,8 @@ export default {
         },
         ink: {
           DEFAULT: "#eaeaec",
-          muted: "rgba(234, 234, 236, 0.48)",
-          faint: "rgba(234, 234, 236, 0.26)",
+          muted: "rgba(234, 234, 236, 0.66)",
+          faint: "rgba(234, 234, 236, 0.42)",
         },
       },
       fontFamily: {
@@ -21,7 +21,7 @@ export default {
         display: ['"Audiowide"', "system-ui", "sans-serif"],
       },
       borderRadius: {
-        card: "22px",
+        card: "16px",
         el: "12px",
       },
       letterSpacing: {

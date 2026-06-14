@@ -2,6 +2,7 @@ import { Home, Plus, Library, Sparkles, Compass, LogOut, Settings } from "lucide
 import type { LucideIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useHoverIntent } from "../lib/useHoverIntent";
+import ModeToggle from "./ModeToggle";
 
 interface NavItem {
   label: string;
@@ -81,8 +82,13 @@ export default function Sidebar({
         })}
       </nav>
 
-      {/* Footer: settings + profile */}
+      {/* Footer: mode toggle + settings + profile */}
       <div className="mt-auto">
+        {/* Basic/Pro mode — compact button collapsed, full pill on hover */}
+        <div className="mb-2 px-1">
+          <ModeToggle expanded={expanded} />
+        </div>
+
         {/* Settings — subtle, sits just above the profile */}
         <button
           type="button"

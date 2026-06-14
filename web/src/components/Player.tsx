@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
 import {
   Play,
   Pause,
@@ -26,13 +25,25 @@ const fmt = (seconds: number) => {
 
 const SPEEDS = [1, 1.25, 1.5, 2] as const;
 
-export default function Player() {
+type PlayerVariant = "home" | "create" | "rail";
+
+export default function Player({
+  variant = "rail",
+  className = "",
+}: {
+  variant?: PlayerVariant;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speedIdx, setSpeedIdx] = useState(0);
   const { hovered, onMouseEnter, onMouseLeave } = useHoverIntent();
 
-  const onCreate = useLocation().pathname === "/create";
+  // home  → docked above the avatar, always expanded, parent-sized
+  // create → pinned open, height synced to the form
+  // rail   → collapsible hover rail on every other route
+  const onCreate = variant === "create";
+  const onHome = variant === "home";
   const playerHeight = useCreateUI((s) => s.playerHeight);
 
   // Real generated track (null until the first Generate/Create completes).
@@ -108,22 +119,27 @@ export default function Player() {
     ? track.prompt.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 6)
     : [];
 
-  // On /create the player is pinned open and tracks the form's height; elsewhere
-  // it stays collapsible at its default height.
-  const expanded = onCreate || open || hovered;
+  // home/create are always open; create tracks the form's height. The rail stays
+  // collapsible at its default height. On home the parent (Layout's right column)
+  // owns positioning and size, so we drop the self-positioning classes there.
+  const expanded = onCreate || onHome || open || hovered;
   const heightStyle =
     onCreate && playerHeight
       ? { height: `clamp(460px, ${Math.round(playerHeight)}px, calc(100vh - 72px))` }
       : undefined;
 
+  const rootClass = onHome
+    ? `glass-panel flex flex-col overflow-hidden ${className}`
+    : `glass-panel absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col overflow-hidden transition-[width] duration-300 ease-out ${
+        heightStyle ? "" : "h-[460px]"
+      } ${expanded ? "w-[300px]" : "w-[58px]"}`;
+
   return (
     <aside
-      onMouseEnter={onCreate ? undefined : onMouseEnter}
-      onMouseLeave={onCreate ? undefined : onMouseLeave}
-      style={heightStyle}
-      className={`glass-panel absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col overflow-hidden transition-[width] duration-300 ease-out ${
-        heightStyle ? "" : "h-[460px]"
-      } ${expanded ? "w-[300px]" : "w-[58px]"}`}
+      onMouseEnter={onCreate || onHome ? undefined : onMouseEnter}
+      onMouseLeave={onCreate || onHome ? undefined : onMouseLeave}
+      style={onHome ? undefined : heightStyle}
+      className={rootClass}
     >
       {/* Music playback element — captions are not applicable to generated songs. */}
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
@@ -148,7 +164,7 @@ export default function Player() {
               <span className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-soft/70">
                 {track ? "Now Playing" : "Player"}
               </span>
-              {!onCreate && (
+              {!onCreate && !onHome && (
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
