@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     db_generation_dsn: SecretStr
     db_conversation_dsn: SecretStr
     db_personalization_dsn: SecretStr
+    db_require_ssl: bool = False   # true when targeting RDS (asyncpg ssl + sslmode)
 
     # AWS infrastructure
     aws_region: str = "us-east-1"

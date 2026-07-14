@@ -35,7 +35,7 @@ def init_db_engines() -> None:
         dsn = getattr(settings, dsn_field).get_secret_value()
 
         connect_args: dict = {}
-        if settings.environment == "prod":
+        if settings.db_require_ssl:
             connect_args["ssl"] = "require"
 
         engine = create_async_engine(
