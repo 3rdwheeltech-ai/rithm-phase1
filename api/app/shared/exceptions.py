@@ -1,5 +1,5 @@
+
 from fastapi import HTTPException
-from typing import Any
 
 
 class RateLimitExceededException(HTTPException):
@@ -26,7 +26,10 @@ class UpstreamServiceException(HTTPException):
     def __init__(self, service: str, retry_after_seconds: int = 30) -> None:
         super().__init__(
             status_code=502,
-            detail=f"Upstream service '{service}' is temporarily unavailable. Please retry.",
+            detail=(
+                f"Upstream service '{service}' is temporarily unavailable. "
+                "Please retry."
+            ),
             headers={"Retry-After": str(retry_after_seconds)},
         )
 

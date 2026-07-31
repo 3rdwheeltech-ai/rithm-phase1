@@ -108,7 +108,10 @@ class IdentityService:
         return user_id
 
     async def login(self, email: str, password: str) -> dict:
-        """Authenticate via USER_PASSWORD_AUTH. Returns the raw AuthenticationResult dict."""
+        """Authenticate via USER_PASSWORD_AUTH.
+
+        Returns the raw AuthenticationResult dict.
+        """
         resp = await run_in_threadpool(
             _cognito.initiate_auth,
             ClientId=_settings.cognito_app_client_id,

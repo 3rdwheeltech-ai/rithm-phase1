@@ -5,6 +5,8 @@ Happy-path signup/login/refresh hit the real dev Cognito pool and are verified
 manually (spec Step 14). Here we cover the guard rails: bearer-token rejection
 and request validation.
 """
+from collections.abc import AsyncIterator, Iterator
+
 import pytest
 from httpx import AsyncClient
 
@@ -13,9 +15,9 @@ from app.shared.db import get_identity_db
 
 
 @pytest.fixture
-def no_db():
+def no_db() -> Iterator[None]:
     """Override the DB dependency — these paths must reject before touching the DB."""
-    async def _null_db():
+    async def _null_db() -> AsyncIterator[None]:
         yield None
 
     app.dependency_overrides[get_identity_db] = _null_db
@@ -39,7 +41,7 @@ async def test_me_with_garbage_token_returns_401(async_client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 async def test_signup_stale_consent_returns_400(
-    async_client: AsyncClient, no_db
+    async_client: AsyncClient, no_db: None
 ) -> None:
     response = await async_client.post(
         "/api/v1/auth/signup",
@@ -58,7 +60,7 @@ async def test_signup_stale_consent_returns_400(
 
 @pytest.mark.asyncio
 async def test_signup_short_password_returns_422(
-    async_client: AsyncClient, no_db
+    async_client: AsyncClient, no_db: None
 ) -> None:
     response = await async_client.post(
         "/api/v1/auth/signup",
@@ -75,7 +77,7 @@ async def test_signup_short_password_returns_422(
 
 @pytest.mark.asyncio
 async def test_signup_invalid_email_returns_422(
-    async_client: AsyncClient, no_db
+    async_client: AsyncClient, no_db: None
 ) -> None:
     response = await async_client.post(
         "/api/v1/auth/signup",
@@ -92,7 +94,7 @@ async def test_signup_invalid_email_returns_422(
 
 @pytest.mark.asyncio
 async def test_signup_invalid_phone_returns_422(
-    async_client: AsyncClient, no_db
+    async_client: AsyncClient, no_db: None
 ) -> None:
     response = await async_client.post(
         "/api/v1/auth/signup",

@@ -6,8 +6,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.shared.db import get_identity_db
-from app.shared.auth import require_user
 from app.modules.identity.schemas import (
     LoginRequest,
     MeResponse,
@@ -17,6 +15,8 @@ from app.modules.identity.schemas import (
     TokenResponse,
 )
 from app.modules.identity.service import identity_service
+from app.shared.auth import require_user
+from app.shared.db import get_identity_db
 
 router = APIRouter(tags=["identity"])
 _settings = get_settings()
@@ -42,28 +42,29 @@ def _http(err: ClientError) -> HTTPException:
 async def signup(
     body: SignupRequest,
     db: AsyncSession = Depends(get_identity_db),
-):
+) -> SignupResponse:
     if body.consent_version != _settings.current_consent_version:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Stale consent version '{body.consent_version}'. "
-            f"Expected '{_settings.current_consent_version}'. Reload the page and retry.",
+            f"Expected '{_settings.current_consent_version}'. "
+            "Reload the page and retry.",
         )
     try:
         user_id = await identity_service.signup(
             db, body.email, body.password, body.name, body.phone_number
         )
     except ClientError as exc:
-        raise _http(exc)
+        raise _http(exc) from exc
     return SignupResponse(user_id=user_id)
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-async def login(body: LoginRequest):
+async def login(body: LoginRequest) -> TokenResponse:
     try:
         result = await identity_service.login(body.email, body.password)
     except ClientError as exc:
-        raise _http(exc)
+        raise _http(exc) from exc
     return TokenResponse(
         id_token=result["IdToken"],
         refresh_token=result["RefreshToken"],
@@ -76,7 +77,7 @@ async def login(body: LoginRequest):
 async def refresh(
     body: RefreshRequest,
     db: AsyncSession = Depends(get_identity_db),
-):
+) -> TokenResponse:
     # SECRET_HASH for REFRESH_TOKEN_AUTH must use the user's actual Cognito
     # username (the sub), not the email alias — resolve it from identity.users.
     row = (
@@ -90,7 +91,7 @@ async def refresh(
     try:
         result = await identity_service.refresh(body.refresh_token, row[0])
     except ClientError as exc:
-        raise _http(exc)
+        raise _http(exc) from exc
     return TokenResponse(
         id_token=result["IdToken"],
         refresh_token=None,          # Cognito does not rotate the refresh token here
@@ -103,7 +104,7 @@ async def refresh(
 async def me(
     user_id: UUID = Depends(require_user),
     db: AsyncSession = Depends(get_identity_db),
-):
+) -> MeResponse:
     row = (
         await db.execute(
             text("SELECT email, is_admin FROM identity.users WHERE id = :id"),

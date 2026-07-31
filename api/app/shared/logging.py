@@ -1,4 +1,5 @@
 import logging
+
 import structlog
 from structlog.typing import EventDict, WrappedLogger
 
@@ -27,8 +28,13 @@ def configure_logging(log_level: str = "INFO") -> None:
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             # NOTE: stdlib.add_logger_name is incompatible with PrintLoggerFactory
-            # (PrintLogger has no .name) — deviation from spec, crashes startup otherwise.
+            # (PrintLogger has no .name) — deviation from spec, crashes
+            # startup otherwise.
             structlog.processors.TimeStamper(fmt="iso"),
+            # Renders the exc_info=True flag logger.exception() sets into an
+            # actual traceback string. Without this, JSONRenderer just
+            # serializes the literal boolean and the traceback is lost.
+            structlog.processors.format_exc_info,
             _scrub_sensitive,
             structlog.processors.JSONRenderer(),
         ],

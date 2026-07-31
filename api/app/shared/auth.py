@@ -51,11 +51,15 @@ async def require_claims(request: Request) -> dict:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
     try:
         claims = _decode(auth.split(" ", 1)[1])
-    except Exception:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Invalid or expired token"
+        ) from exc
     # We only accept id_tokens (not access tokens) as the bearer credential.
     if claims.get("token_use") != "id":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong token type — id_token required")
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Wrong token type — id_token required"
+        )
     return claims
 
 
