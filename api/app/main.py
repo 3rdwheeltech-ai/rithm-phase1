@@ -79,6 +79,20 @@ def create_app() -> FastAPI:
     # uvicorn to a single process and ECS to desiredCount=1.
     app.state.sse_hub = SSEHub()
 
+    # ── Composition root: generation → catalog ─────────────────
+    # The ONLY place these two modules meet. generation never imports catalog
+    # (import-linter forbids it); it declares a TrackWriter Protocol and takes
+    # an implementation. CatalogService satisfies that Protocol structurally,
+    # and this assignment is where pyright checks that it actually does.
+    #
+    # Bound here rather than in lifespan for the same reason the hub is: the
+    # test suite's ASGITransport never runs lifespan, so anything lifespan-bound
+    # is invisible to most of the suite.
+    from app.modules.catalog.service import CatalogService
+    from app.modules.generation.service import generation_service
+
+    generation_service.track_writer = CatalogService()
+
     # ── Routers — added as modules are implemented (Days 6–33) ─
     from app.modules.generation import api as generation_api
     from app.modules.identity.api import router as identity_router
