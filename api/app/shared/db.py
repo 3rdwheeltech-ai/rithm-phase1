@@ -1,12 +1,13 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+import structlog
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-import structlog
 
 logger = structlog.get_logger()
 
@@ -21,6 +22,9 @@ _MODULE_DSN_GETTERS: dict[str, str] = {
     "conversation": "db_conversation_dsn",
     "personalization": "db_personalization_dsn",
 }
+
+# Public view of the module list — /health/deep pings one session per module.
+MODULE_NAMES: tuple[str, ...] = tuple(_MODULE_DSN_GETTERS)
 
 
 def init_db_engines() -> None:
@@ -64,6 +68,19 @@ async def close_db_engines() -> None:
 async def get_identity_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency: identity-module session (auto-commit on success)."""
     async with get_session("identity") as session:
+        yield session
+
+
+async def get_generation_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    FastAPI dependency: generation-module session (auto-commit on success).
+
+    NOT for the SSE stream route — a request-scoped session is torn down only
+    after the response completes, so a 5-minute stream would pin a pooled
+    connection (pool_size=5 + max_overflow=5 → 10 concurrent streams, then
+    everything blocks). generation/service.py opens its own short sessions.
+    """
+    async with get_session("generation") as session:
         yield session
 
 

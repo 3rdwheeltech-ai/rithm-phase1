@@ -60,6 +60,8 @@ services:
       SNS_COMPLETIONS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:rithm-job-completions
       ENVIRONMENT: local
       LOG_LEVEL: DEBUG
+      # Mounts /internal/dev/enqueue-test-job. Local/dev only.
+      RITHM_DEV_ENDPOINTS: "1"
     volumes:
       - ./api/app:/app/app     # hot-reload in dev only (target: development)
     depends_on:

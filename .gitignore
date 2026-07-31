@@ -30,6 +30,7 @@ test-results/
 
 # Internal docs — not for the public repo
 docs/FrontendReferences/
+docs/local-misc/
 docs/others/terminal-progress-misc.md
 docs/InitialSetup/RITHM_Phase1_DesignDoc-2.md
 .env.rds

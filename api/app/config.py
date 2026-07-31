@@ -1,6 +1,11 @@
+from functools import lru_cache
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from functools import lru_cache
+
+# Single source of truth for the API version — used by the FastAPI app, the
+# /health payload, and the startup log line.
+API_VERSION = "0.1.0"
 
 
 class Settings(BaseSettings):
@@ -50,6 +55,11 @@ class Settings(BaseSettings):
     sse_token_secret: SecretStr = SecretStr("dev-sse-secret-change-me")
     rate_limit_per_24h: int = 20
     stuck_job_timeout_minutes: int = 10
+
+    # Dev-only routes (/internal/dev/*). Guarded at include_router() time in
+    # main.py, never with an `if` inside a handler — an unmounted route cannot
+    # be reached by accident. MUST be absent/false in the production taskdef.
+    rithm_dev_endpoints: bool = False
 
     # Consent
     current_consent_version: str = "tos-2026-05"
