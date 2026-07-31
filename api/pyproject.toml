@@ -67,12 +67,26 @@ testpaths = ["tests"]
 # ── Linting ─────────────────────────────────────────────────────
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
-ignore = ["ANN101", "ANN102"]
+# ANN101/ANN102 (missing self/cls annotations) were removed from ruff; listing
+# them here only produces a startup warning.
+ignore = []
+
+[tool.ruff.lint.flake8-bugbear]
+# `x: T = Depends(...)` is the FastAPI dependency-injection idiom, not the
+# mutable-default bug B008 is looking for.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Body", "fastapi.Form", "fastapi.File"]
 
 [tool.ruff.lint.per-file-ignores]
 # Baseline migrations embed raw DDL (comments included) transcribed verbatim from
 # ops/db/*.sql; keep them byte-for-byte rather than reflowing to the line limit.
 "migrations/*/versions/*.py" = ["E501"]
+# Test doubles stand in for SQLAlchemy Result/Session and for **kwargs-taking
+# service methods; annotating them concretely would mean re-declaring library
+# internals, not catching bugs.
+"tests/*" = ["ANN401"]
+# boto3/botocore ship no py.typed, so every client and response is Any. The
+# suppression is confined here on purpose — see the module docstring.
+"app/shared/aws.py" = ["ANN401"]
 
 [tool.pyright]
 pythonVersion = "3.12"
