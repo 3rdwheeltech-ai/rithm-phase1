@@ -7,11 +7,14 @@ dependencies = [
     "boto3>=1.34",
     "sqlalchemy>=2.0",            # sync only — worker is not async
     "psycopg2-binary>=2.9",
+    "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "uuid-utils>=0.9",
 ]
 
-# GPU deps are an optional group so CI can install without CUDA
+# GPU deps are an optional group so CI can install without CUDA.
+# torch is deliberately NOT a runtime dep: `--target stub` builds without CUDA,
+# and worker/inference.py imports torch only inside the real-inference branch.
 [dependency-groups]
 gpu = [
     "torch>=2.3",
@@ -32,6 +35,7 @@ dev-dependencies = [
     "pytest>=8.2",
     "ruff>=0.5",
     "pyright>=1.1",
+    "import-linter>=2.1",
 ]
 
 [tool.uv.sources]
@@ -43,6 +47,51 @@ name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
 explicit = true
 
+# ── Import boundary enforcement ─────────────────────────────────
+# The job pipeline is a layer cake: main drives processor, processor drives the
+# capability modules, and those may only reach down. A capability module that
+# imports processor or main is a cycle, and a cycle here means the stub/real
+# inference seam can no longer be swapped without dragging the loop with it.
+[tool.importlinter]
+root_package = "worker"
+
+[[tool.importlinter.contracts]]
+name = "Worker layering"
+type = "layers"
+layers = [
+    "worker.main",
+    "worker.processor",
+    "worker.inference | worker.storage | worker.messaging | worker.db | worker.audio",
+    "worker.aws",
+    "worker.config | worker.logging_setup",
+]
+
+# ── Test configuration ──────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["gpu: requires NVIDIA GPU (skip in CI)"]
+
+# ── Linting ─────────────────────────────────────────────────────
+# Mirrors api/pyproject.toml so both trees fail on the same things.
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# boto3/botocore ship no py.typed, so every client and response is Any. The
+# suppression is confined to the one module that touches the SDK — see its
+# docstring.
+"worker/aws.py" = ["ANN401"]
+# The loaded model handle is genuinely opaque until Day 3 tells us what
+# ACE-Step's entrypoint returns. Inventing a Protocol for it now would be a
+# guess that the real API then contradicts; these two modules only pass it
+# through. Narrow it to a real type once the PoC lands.
+"worker/inference.py" = ["ANN401"]
+"worker/processor.py" = ["ANN401"]
+# Test doubles stand in for boto3 clients and SQLAlchemy results; annotating
+# them concretely would mean re-declaring library internals, not catching bugs.
+"tests/*" = ["ANN401"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
