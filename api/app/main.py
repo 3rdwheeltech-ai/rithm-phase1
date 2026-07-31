@@ -6,6 +6,10 @@ from fastapi import FastAPI
 
 logger = structlog.get_logger()
 
+# Must match config.Settings.sse_token_secret's default. Kept here so the
+# lifespan check reads as a literal comparison against a known-bad value.
+_DEFAULT_SSE_SECRET = "dev-sse-secret-change-me"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -16,6 +20,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    # Refuse to serve prod traffic with the signing key that is published in
+    # this repo. Without this a taskdef that forgets SSE_TOKEN_SECRET boots
+    # happily and mints stream tokens anyone can forge — `extra="ignore"` means
+    # a misspelled env var falls back to the default rather than erroring.
+    if (
+        settings.environment == "prod"
+        and settings.sse_token_secret.get_secret_value()
+        == _DEFAULT_SSE_SECRET
+    ):
+        raise RuntimeError(
+            "SSE_TOKEN_SECRET is the public default in prod — refusing to start"
+        )
+
     init_db_engines()
 
     logger.info(
