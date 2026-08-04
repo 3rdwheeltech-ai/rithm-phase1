@@ -6,10 +6,15 @@ import Home from "./pages/Home";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { useAuth } from "./store/auth";
 
-/** Keeps signed-in users out of the auth pages. */
+/**
+ * Keeps signed-in users out of the auth pages. Reads `status`, not the token:
+ * during bootstrap there is no token yet, and rendering the login form in that
+ * window makes an already-signed-in user watch it flash away.
+ */
 function GuestOnly({ children }: { children: ReactNode }) {
-  const idToken = useAuth((s) => s.idToken);
-  return idToken ? <Navigate to="/" replace /> : <>{children}</>;
+  const status = useAuth((s) => s.status);
+  if (status === "loading") return null;
+  return status === "authed" ? <Navigate to="/" replace /> : <>{children}</>;
 }
 
 export default function App() {

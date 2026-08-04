@@ -1,13 +1,7 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { apiFetch } from "../lib/api";
-import { useAuth } from "../store/auth";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { login } from "../lib/api";
 import { GoogleLogo, AppleLogo, MicrosoftLogo } from "../components/SocialLogos";
-
-interface TokenResponse {
-  id_token: string;
-  refresh_token: string;
-}
 
 // Social providers are visual placeholders for a future release.
 const SOCIAL = [
@@ -18,7 +12,11 @@ const SOCIAL = [
 
 export default function Login() {
   const nav = useNavigate();
-  const setAuth = useAuth((s) => s.setAuth);
+  const [params] = useSearchParams();
+  // Honour the deep link the route guard was protecting. Relative paths only —
+  // an absolute `next` would make this an open redirect.
+  const rawNext = params.get("next") ?? "/";
+  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,12 +28,8 @@ export default function Login() {
     setErr(null);
     setBusy(true);
     try {
-      const r = await apiFetch<TokenResponse>("/api/v1/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-      setAuth({ idToken: r.id_token, refreshToken: r.refresh_token, email });
-      nav("/", { replace: true });
+      await login(email, password);
+      nav(next, { replace: true });
     } catch (e) {
       setErr((e as Error).message);
     } finally {

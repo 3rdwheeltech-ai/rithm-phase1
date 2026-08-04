@@ -1,19 +1,12 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { apiFetch } from "../lib/api";
-import { useAuth } from "../store/auth";
+import { login, signup } from "../lib/api";
 
 // Must match the API's CURRENT_CONSENT_VERSION (api/app/config.py).
 const CONSENT_VERSION = "tos-2026-05";
 
-interface TokenResponse {
-  id_token: string;
-  refresh_token: string;
-}
-
 export default function Signup() {
   const nav = useNavigate();
-  const setAuth = useAuth((s) => s.setAuth);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,22 +21,15 @@ export default function Signup() {
     setErr(null);
     setBusy(true);
     try {
-      await apiFetch("/api/v1/auth/signup", {
-        method: "POST",
-        body: JSON.stringify({
-          email,
-          password,
-          name,
-          phone_number: phone,
-          consent_version: CONSENT_VERSION,
-        }),
+      await signup({
+        email,
+        password,
+        name,
+        phone_number: phone,
+        consent_version: CONSENT_VERSION,
       });
       // Auto-login straight into the studio after signup.
-      const r = await apiFetch<TokenResponse>("/api/v1/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-      setAuth({ idToken: r.id_token, refreshToken: r.refresh_token, email });
+      await login(email, password);
       nav("/", { replace: true });
     } catch (e) {
       setErr((e as Error).message);
