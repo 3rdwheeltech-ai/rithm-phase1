@@ -1,12 +1,130 @@
-# Deploy workflow stub — full version lands on Day 3 (see docs/RITHM_Days1to5_CodeSpec.md).
-name: Deploy API
+name: deploy-api
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - '.github/workflows/deploy-api.yml'
+
+# Never cancel a deploy mid-flight: a cancelled run can leave migrations applied
+# with the old image still serving, or a half-updated service.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # OIDC. Without it: "Credentials could not be loaded".
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: rithm/api
+  ECS_CLUSTER: rithm-prod
+  ECS_SERVICE: rithm-api
+  TASK_FAMILY: rithm-api
+  MIGRATIONS_FAMILY: rithm-api-migrations
 
 jobs:
-  placeholder:
-    name: Deploy API placeholder
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "deploy-api stub — full pipeline lands on Day 3"
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --provenance=false --sbom=false \
+            --target production \
+            -t "$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA" \
+            -t "$REGISTRY/$ECR_REPOSITORY:latest" \
+            --push api/
+
+      # ── Migrations, BEFORE the service swap ────────────────────────────────
+      #
+      # This ordering is the forward-only safety guarantee: a failed migration
+      # leaves the OLD image serving. Reverse it and a bad migration takes down
+      # a working API.
+      - name: Run migrations and gate on the exit code
+        env:
+          MIGRATION_SUBNETS: ${{ secrets.MIGRATION_SUBNETS }}
+          MIGRATION_SG: ${{ secrets.MIGRATION_SG }}
+        run: |
+          # assignPublicIp=ENABLED is mandatory: there is no NAT gateway, so
+          # without it the task cannot reach Secrets Manager or RDS and dies
+          # with a networking error that reads like a permissions problem.
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "$MIGRATIONS_FAMILY" \
+            --network-configuration "awsvpcConfiguration={subnets=[$MIGRATION_SUBNETS],securityGroups=[$MIGRATION_SG],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "migration task: $TASK_ARN"
+
+          # `aws ecs run-task` succeeds as soon as the task is ACCEPTED. It says
+          # nothing about whether the migration worked — the exit code only
+          # exists after the task has stopped. A workflow that omits this
+          # "passes" while the database is broken, then swaps the service on top.
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+                 --query 'tasks[0].containers[0].exitCode' --output text)
+
+          if [ "$EXIT" != "0" ]; then
+            # `None` here means the task never started at all — stoppedReason
+            # is the only thing that will tell you why.
+            aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+              --query 'tasks[0].{exit:containers[0].exitCode,reason:stoppedReason,status:lastStatus}'
+            echo "::error::migrations failed (exit=$EXIT) — not touching the service"
+            exit 1
+          fi
+          echo "migrations OK"
+
+      # ── Register a revision by PATCHING the live definition ────────────────
+      #
+      # Never render api.json.template here. Task definitions are tuned in the
+      # console — ESTIMATED_COLD_START_SECONDS, RATE_LIMIT_PER_24H,
+      # SSE_TOKEN_TTL_SECONDS — deliberately and without a deploy. A workflow
+      # that renders the template silently overwrites every one of those on the
+      # next unrelated push. Describe-and-patch changes exactly one field.
+      - name: Register a new task definition
+        id: register
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' > td.json
+
+          jq --arg IMG "$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA" '
+              .containerDefinitions[0].image = $IMG
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+          ' td.json > new-td.json
+
+          REV=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
+                --query 'taskDefinition.revision' --output text)
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "registered $TASK_FAMILY:$REV"
+
+      - name: Update the service and wait for stability
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_FAMILY:${{ steps.register.outputs.revision }}" \
+            --query 'service.deployments[0].{status:status,desired:desiredCount}' \
+            --output table
+
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "service stable on $TASK_FAMILY:${{ steps.register.outputs.revision }}"

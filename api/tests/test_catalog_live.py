@@ -684,3 +684,68 @@ async def test_soft_delete_refuses_another_users_track(
     assert not await CatalogService().soft_delete_track(
         track_id=seeded_tracks["foreign"], user_id=seeded_tracks["owner"]
     )
+
+
+# ── GET /jobs/{job_id} — the polling fallback's query ──────────────────────
+
+
+@pytest.mark.usefixtures("live_generation_engine")
+async def test_job_status_join_runs_under_the_narrow_generation_grant(
+    admin_session: AsyncSession,
+    job_ids: dict[str, UUID],
+    hub: SSEHub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    load_job_status LEFT JOINs catalog.tracks on the GENERATION connection.
+
+    That is only legal because rithm_generation holds column-scoped SELECT on
+    exactly (id, source_job_id). No unit test can prove it: the projection
+    assertion in test_job_status_route.py checks the SQL text, and Day 3 §3.4
+    is the standing reminder that an assertion about SQL can be true while the
+    query is broken. This runs it against the real grant.
+    """
+    _presigned(monkeypatch)
+    await _service().finalize_job(**_completed(hub, job_ids["job"]))
+
+    row = await _service().load_job_status(
+        job_id=job_ids["job"], user_id=job_ids["user"]
+    )
+
+    assert row is not None
+    assert row.status == "COMPLETED"
+    assert row.s3_mp3_key == _MP3_KEY
+    # The whole point of the join: the catalog row's id comes back.
+    assert row.track_id is not None
+
+    expected = (
+        await admin_session.execute(
+            text("SELECT id FROM catalog.tracks WHERE source_job_id = :jid"),
+            {"jid": str(job_ids["job"])},
+        )
+    ).scalar_one()
+    assert row.track_id == expected
+
+
+@pytest.mark.usefixtures("live_generation_engine")
+async def test_job_status_is_owner_scoped_in_the_query_itself(
+    job_ids: dict[str, UUID],
+) -> None:
+    """Another user's job comes back as None, so the route can 404 it."""
+    assert (
+        await _service().load_job_status(job_id=job_ids["job"], user_id=_uuid())
+    ) is None
+
+
+@pytest.mark.usefixtures("live_generation_engine")
+async def test_job_status_before_any_track_exists(
+    job_ids: dict[str, UUID],
+) -> None:
+    """A QUEUED job has no catalog row yet; the LEFT JOIN must still answer."""
+    row = await _service().load_job_status(
+        job_id=job_ids["job"], user_id=job_ids["user"]
+    )
+    assert row is not None
+    assert row.status == "QUEUED"
+    assert row.track_id is None
+    assert row.s3_mp3_key is None

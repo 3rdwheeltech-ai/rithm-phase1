@@ -1,12 +1,79 @@
-# Deploy workflow stub — full version lands on Day 3 (see docs/RITHM_Days1to5_CodeSpec.md).
-name: Deploy Worker
+name: deploy-worker
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: rithm/worker
 
 jobs:
-  placeholder:
-    name: Deploy Worker placeholder
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "deploy-worker stub — full pipeline lands on Day 3"
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      # No HF_TOKEN, no --build-arg, no --cache-from gymnastics. ACE-Step is an
+      # HTTP server and the worker is a client, so this image holds no model
+      # weights: it is ~914 MB / 230 MB compressed and builds from
+      # python:3.11-slim in about a minute. Everything the older runbook says
+      # about a 12 GB image and cached weight layers is obsolete.
+      #
+      # --target production is byte-identical to --target stub; the target name
+      # is kept so the intent of a build stays legible.
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --provenance=false --sbom=false \
+            --target production \
+            -t "$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA" \
+            -t "$REGISTRY/$ECR_REPOSITORY:latest" \
+            --push worker/
+
+      # Register a revision and STOP. No update-service: the worker service
+      # sits at desiredCount=0 between jobs and picks the new revision up on the
+      # next scale-up. Calling update-service would start a GPU task purely to
+      # prove a deploy worked, which is an expensive way to feel confident.
+      #
+      # The family is a repo variable rather than a hardcode because the
+      # sidecar-vs-standalone decision for the ACE-Step server may change which
+      # family is the real one.
+      - name: Register a new task definition
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TASK_FAMILY: ${{ vars.WORKER_TASK_FAMILY || 'rithm-worker' }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' > td.json
+
+          jq --arg IMG "$REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA" '
+              .containerDefinitions[0].image = $IMG
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+          ' td.json > new-td.json
+
+          REV=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
+                --query 'taskDefinition.revision' --output text)
+          echo "registered $TASK_FAMILY:$REV — it goes live on the next scale-up"

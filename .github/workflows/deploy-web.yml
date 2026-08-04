@@ -1,12 +1,79 @@
-# Deploy workflow stub — full version lands on Day 3 (see docs/RITHM_Days1to5_CodeSpec.md).
-name: Deploy Web
+name: deploy-web
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-web.yml'
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
 
 jobs:
-  placeholder:
-    name: Deploy Web placeholder
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "deploy-web stub — full pipeline lands on Day 3"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # These three steps in THIS ORDER, and the cache headers are as deliberate
+      # as the order.
+      #
+      # Vite emits content-hashed asset filenames, so assets are safe to cache
+      # for a year — but index.html is the index of WHICH hashes exist. Cache
+      # index.html and a returning user gets yesterday's HTML pointing at asset
+      # hashes that --delete just pruned: a blank white page with 403s in the
+      # console, which looks exactly like a broken deploy. Uploading assets
+      # first means the new HTML never references a file that is not there yet.
+      - name: Upload hashed assets (immutable)
+        env:
+          WEB_BUCKET: ${{ secrets.WEB_BUCKET }}
+        run: |
+          aws s3 sync web/dist/ "s3://$WEB_BUCKET/" --delete \
+            --exclude "index.html" \
+            --exclude "*.map" \
+            --cache-control "public,max-age=31536000,immutable"
+
+      - name: Upload index.html (never cached)
+        env:
+          WEB_BUCKET: ${{ secrets.WEB_BUCKET }}
+        run: |
+          aws s3 cp web/dist/index.html "s3://$WEB_BUCKET/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate" \
+            --content-type "text/html; charset=utf-8"
+
+      # NOTE: this needs cloudfront:CreateInvalidation on the deploy role. If it
+      # is missing, this step fails AFTER the bucket has already been updated —
+      # the site is live but CloudFront still serves the old index.html.
+      - name: Invalidate CloudFront
+        env:
+          CF_DIST_ID: ${{ secrets.CF_DIST_ID }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$CF_DIST_ID" \
+            --paths '/*' \
+            --query 'Invalidation.{id:Id,status:Status}' --output table

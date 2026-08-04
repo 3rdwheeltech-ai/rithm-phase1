@@ -1,0 +1,95 @@
+{
+  "_comment": [
+    "ECS task definition for rithm-api-migrations — the one-off Fargate task",
+    "deploy-api.yml runs BEFORE it swaps the service. Replace <ACCOUNT>,",
+    "<SECRET_RDS_ADMIN_ARN> and <SHA> before registering.",
+    "",
+    "Register this by hand once. It is bootstrap documentation, not a deploy",
+    "source: deploy-api.yml describes the LIVE definition and patches only the",
+    "image, so anything tuned in the console survives every deploy.",
+    "",
+    "FOUR THINGS THAT WILL BITE:",
+    "",
+    "1. The secret is the RDS *ADMIN* secret, not the module secret. Migrations",
+    "   run as rithm_admin (rithm_master on RDS). The per-module roles hold DML",
+    "   privileges only — they have no CREATE on their own schemas — so a",
+    "   migration run as rithm_generation fails with a permission error that",
+    "   reads like a connection problem.",
+    "",
+    "2. Every secret ARN needs the TRAILING '::'. The syntax is",
+    "   <arn>:<json-key>:<version-stage>:<version-id>; omit the two empty",
+    "   trailing fields and ECS injects the entire JSON blob as the value.",
+    "",
+    "3. assignPublicIp=ENABLED is a run-task PARAMETER, not a task-definition",
+    "   field, so it lives in the workflow rather than here — do not go looking",
+    "   for it in this file. It is mandatory: there is no NAT gateway, so",
+    "   without it the task cannot reach Secrets Manager or RDS.",
+    "",
+    "4. identity migrates FIRST — it owns the shared public.touch_updated_at",
+    "   preamble the other four schemas depend on. run-migrations.sh already",
+    "   sequences this. Do not reorder its MODULES array.",
+    "",
+    "All five DSNs deliberately point at the SAME admin connection: each module",
+    "keeps its own alembic_version table inside its own schema, so one",
+    "privileged connection applies all five correctly."
+  ],
+  "family": "rithm-api-migrations",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT>:role/rithm-api-task-role",
+  "containerDefinitions": [
+    {
+      "name": "migrations",
+      "image": "<ACCOUNT>.dkr.ecr.us-east-1.amazonaws.com/rithm/api:<SHA>",
+      "essential": true,
+      "command": ["bash", "ops/scripts/run-migrations.sh"],
+      "environment": [
+        { "name": "ENVIRONMENT", "value": "prod" },
+        { "name": "DB_REQUIRE_SSL", "value": "true" },
+        { "name": "LOG_LEVEL", "value": "INFO" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        {
+          "_note": "Settings has no defaults for these three and refuses to construct without them. Nothing in a migration touches AWS, so the values only need to be well-formed.",
+          "name": "ASSETS_BUCKET",
+          "value": "<ASSETS_BUCKET>"
+        },
+        { "name": "SQS_JOBS_QUEUE_URL", "value": "<JOBS_QUEUE_URL>" },
+        { "name": "SNS_COMPLETIONS_TOPIC_ARN", "value": "<TOPIC_ARN>" }
+      ],
+      "secrets": [
+        {
+          "name": "DB_IDENTITY_DSN",
+          "valueFrom": "<SECRET_RDS_ADMIN_ARN>:admin_dsn::"
+        },
+        {
+          "name": "DB_CATALOG_DSN",
+          "valueFrom": "<SECRET_RDS_ADMIN_ARN>:admin_dsn::"
+        },
+        {
+          "name": "DB_GENERATION_DSN",
+          "valueFrom": "<SECRET_RDS_ADMIN_ARN>:admin_dsn::"
+        },
+        {
+          "name": "DB_CONVERSATION_DSN",
+          "valueFrom": "<SECRET_RDS_ADMIN_ARN>:admin_dsn::"
+        },
+        {
+          "name": "DB_PERSONALIZATION_DSN",
+          "valueFrom": "<SECRET_RDS_ADMIN_ARN>:admin_dsn::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rithm-api-migrations",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "migrations",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}
