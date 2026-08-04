@@ -176,6 +176,27 @@ def _as_list(value: Any) -> list[Any] | None:
     return cast("list[Any]", value) if isinstance(value, list) else None
 
 
+def _unwrap_envelope(raw: Any, path: str) -> Any:
+    """
+    The live server wraps every response as {"data": ..., "code": ...,
+    "error": ..., "timestamp": ..., "extra": ...} — confirmed against the
+    real /release_task and /query_result bodies, neither of which the PoC
+    intake recorded with this outer layer. Unwrap it once, here, rather
+    than teaching every downstream parser about an envelope that has
+    nothing to do with the task shape underneath it. A body without this
+    shape (e.g. a mocked flat response in tests) passes through unchanged.
+    """
+    envelope = _as_dict(raw)
+    if envelope is None or "data" not in envelope or "code" not in envelope:
+        return raw
+    if envelope.get("code") != 200:
+        raise InferenceError(
+            f"ACE-Step {path} returned code={envelope.get('code')}: "
+            f"{envelope.get('error')}"[:500]
+        )
+    return envelope["data"]
+
+
 def _task_state(payload: Any) -> dict[str, Any]:
     """
     Normalise a /query_result body down to the single task we asked about.
@@ -198,6 +219,22 @@ def _task_state(payload: Any) -> dict[str, Any]:
     return state
 
 
+def _result_entries(state: dict[str, Any]) -> list[Any]:
+    """
+    Normalise `state["result"]` to a list.
+
+    The live server JSON-encodes it as a string rather than nesting it as
+    real JSON; a malformed string is treated the same as an absent result.
+    """
+    raw_result = state.get("result")
+    if isinstance(raw_result, str):
+        try:
+            raw_result = json.loads(raw_result)
+        except json.JSONDecodeError:
+            raw_result = None
+    return _as_list(raw_result) or []
+
+
 def _reported_seed(state: dict[str, Any]) -> Any:
     """
     Dig out the seed the server actually used.
@@ -211,7 +248,7 @@ def _reported_seed(state: dict[str, Any]) -> Any:
     info = _as_dict(state.get("generation_info"))
     if info is not None:
         candidates.append(info)
-    for entry in _as_list(state.get("result")) or []:
+    for entry in _result_entries(state):
         entry_dict = _as_dict(entry)
         if entry_dict is not None:
             candidates.append(entry_dict)
@@ -232,7 +269,7 @@ def _result_file(state: dict[str, Any]) -> str:
     worker would download nothing, hand ffmpeg an empty file, and surface a
     codec error that points nowhere near the real cause.
     """
-    results = _as_list(state.get("result")) or []
+    results = _result_entries(state)
     first = _as_dict(results[0]) if results else None
     remote = first.get("file") if first is not None else None
     if not remote:
@@ -322,7 +359,7 @@ class AceStepHttpModel:
         try:
             response = self._client.post(path, json=payload)
             response.raise_for_status()
-            return response.json()
+            raw = response.json()
         except httpx.HTTPError as exc:
             raise InferenceError(
                 f"ACE-Step {path} failed: {type(exc).__name__}: {exc}"[:500]
@@ -331,6 +368,7 @@ class AceStepHttpModel:
             raise InferenceError(
                 f"ACE-Step {path} returned a non-JSON body: {exc}"[:500]
             ) from exc
+        return _unwrap_envelope(raw, path)
 
     def _release_task(self, payload: dict[str, Any]) -> str:
         """
@@ -425,9 +463,16 @@ class AceStepHttpModel:
         The remote extension is preserved rather than forced to .wav: the
         server may hand back mp3, and letting ffmpeg see the real container is
         the difference between a clean decode and a guess.
+
+        The live server's `file` value is a ready-made relative URL
+        ("/v1/audio?path=<urlencoded path>"), not a bare filesystem path —
+        GET it as-is rather than double-wrapping it in another `path` param.
         """
         try:
-            response = self._client.get("/v1/audio", params={"path": remote_path})
+            if remote_path.startswith("/v1/audio"):
+                response = self._client.get(remote_path)
+            else:
+                response = self._client.get("/v1/audio", params={"path": remote_path})
             response.raise_for_status()
             data = response.content
         except httpx.HTTPError as exc:
