@@ -53,6 +53,26 @@ jobs:
       run:
         working-directory: api
 
+    # Settings has eight required fields and no .env in CI — api/.env is
+    # gitignored, so locally these come from a file that does not exist on a
+    # runner. Without them the app cannot even be IMPORTED, and conftest fails
+    # before collecting a single test.
+    #
+    # Job-level so the bootstrap step sees them too. ci-bootstrap-db.sh
+    # deliberately overrides the DSNs with the superuser for the migration run.
+    env:
+      ENVIRONMENT: local
+      DB_REQUIRE_SSL: 'false'
+      DB_IDENTITY_DSN: postgresql+asyncpg://rithm_identity:dev_identity_pw@localhost:5432/rithm-db
+      DB_CATALOG_DSN: postgresql+asyncpg://rithm_catalog:dev_catalog_pw@localhost:5432/rithm-db
+      DB_GENERATION_DSN: postgresql+asyncpg://rithm_generation:dev_generation_pw@localhost:5432/rithm-db
+      DB_CONVERSATION_DSN: postgresql+asyncpg://rithm_conversation:dev_conversation_pw@localhost:5432/rithm-db
+      DB_PERSONALIZATION_DSN: postgresql+asyncpg://rithm_personalization:dev_personalization_pw@localhost:5432/rithm-db
+      # Nothing in the suite talks to AWS — these only need to be well-formed.
+      ASSETS_BUCKET: rithm-assets-ci
+      SQS_JOBS_QUEUE_URL: http://localhost:4566/000000000000/rithm-generation-jobs
+      SNS_COMPLETIONS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:rithm-job-completions
+
     # A real Postgres is worth the setup cost. Day 3's keyset-pagination bug —
     # every page after the first returned a 500 — was caught only by the live-DB
     # suite; the unit test asserted the right thing about the SQL and the code
