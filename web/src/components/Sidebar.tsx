@@ -61,14 +61,17 @@ export default function Sidebar({
           <button
             key={label}
             type="button"
-            title={label}
-            aria-label={label}
+            title={to ? label : `${label} — coming soon`}
+            aria-label={to ? label : `${label} — coming soon`}
             aria-current={active ? "page" : undefined}
+            disabled={!to}
             onClick={to ? () => nav(to) : undefined}
             className={
-              active
-                ? "flex h-11 items-center gap-3.5 rounded-el border border-brand/25 bg-brand/15 px-2 text-ink transition-colors"
-                : "flex h-11 items-center gap-3.5 rounded-el border border-transparent px-2 text-ink-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
+              !to
+                ? "flex h-11 cursor-not-allowed items-center gap-3.5 rounded-el border border-transparent px-2 text-ink-faint opacity-40"
+                : active
+                  ? "flex h-11 items-center gap-3.5 rounded-el border border-brand/25 bg-brand/15 px-2 text-ink transition-colors"
+                  : "flex h-11 items-center gap-3.5 rounded-el border border-transparent px-2 text-ink-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
             }
           >
             <Icon className="h-5 w-5 flex-shrink-0" strokeWidth={1.75} />
@@ -92,9 +95,10 @@ export default function Sidebar({
         {/* Settings — subtle, sits just above the profile */}
         <button
           type="button"
-          title="Settings"
-          aria-label="Settings"
-          className="flex h-10 w-full items-center gap-3.5 rounded-el border border-transparent px-2 text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
+          disabled
+          title="Settings — coming soon"
+          aria-label="Settings — coming soon"
+          className="flex h-10 w-full cursor-not-allowed items-center gap-3.5 rounded-el border border-transparent px-2 text-ink-faint opacity-40"
         >
           <Settings className="h-[18px] w-[18px] flex-shrink-0" strokeWidth={1.75} />
           <span

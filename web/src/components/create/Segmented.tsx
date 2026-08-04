@@ -4,6 +4,15 @@ export interface SegmentOption<T extends string> {
   value: T;
   label: string;
   icon?: LucideIcon;
+  /**
+   * Renders the segment but refuses selection. Used for controls the API has no
+   * field for yet: showing them disabled is honest, hiding them means the same
+   * question gets asked every week, enabling them means an error the user
+   * cannot act on.
+   */
+  disabled?: boolean;
+  /** Tooltip, and the accessible explanation for a disabled segment. */
+  title?: string;
 }
 
 interface SegmentedProps<T extends string> {
@@ -39,9 +48,15 @@ export default function Segmented<T extends string>({
             type="button"
             role="tab"
             aria-selected={active}
+            disabled={opt.disabled}
+            title={opt.title}
             onClick={() => onChange(opt.value)}
             className={`flex items-center gap-1.5 rounded-full font-medium transition-colors ${pad} ${
-              active ? "bg-white/10 text-ink" : "text-ink-muted hover:text-ink"
+              opt.disabled
+                ? "cursor-not-allowed text-ink-faint opacity-40"
+                : active
+                  ? "bg-white/10 text-ink"
+                  : "text-ink-muted hover:text-ink"
             }`}
           >
             {Icon && <Icon className="h-3.5 w-3.5 text-brand-soft" strokeWidth={1.75} />}

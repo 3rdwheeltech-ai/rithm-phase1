@@ -1,173 +1,154 @@
-import { useEffect, useRef, useState } from "react";
-import { Sparkles, ChevronDown, Plus, Check, Music } from "lucide-react";
+import { useRef, useState } from "react";
+import { Music } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import Segmented from "./create/Segmented";
+import TickSlider from "./create/TickSlider";
+import JobProgress from "./JobProgress";
+import ErrorToast from "./ErrorToast";
+import { useGenerate } from "../hooks/useGenerate";
+import { formatDuration } from "../lib/track";
+import {
+  LENGTH_MAX_SECONDS,
+  LENGTH_MIN_SECONDS,
+  PROMPT_MAX_LENGTH,
+  type GenerateRequest,
+} from "../types/api";
 
-interface SampleLyric {
-  id: string;
-  title: string;
-  excerpt: string;
-}
-
-// Mock "previously used" lyrics — real history arrives with the Phase 2 backend.
-const SAMPLE_LYRICS: SampleLyric[] = [
-  { id: "midnight-drive", title: "Midnight Drive", excerpt: "City lights blur as we ride through the dark…" },
-  { id: "neon-rain", title: "Neon Rain", excerpt: "Falling colours on the avenue tonight…" },
-  { id: "golden-hour", title: "Golden Hour", excerpt: "Hold me close till the daylight fades…" },
-];
-
-// Example prompts shown as chips below the box (Stitch-style).
+// Example prompts shown as chips below the box.
 const SUGGESTIONS = [
   "Dreamy lo-fi with warm piano and soft rain",
   "Upbeat synthwave for a midnight drive",
   "Cinematic orchestral build with epic drums",
 ];
 
-type Lyric =
-  | { kind: "none" }
-  | { kind: "preview"; id: string; title: string; excerpt: string }
-  | { kind: "custom" };
+/** Write / Prompt have no API field — see the Vocals control below. */
+type LyricMode = "vocal" | "instrumental" | "write";
 
 export default function QuickGenerate() {
+  const nav = useNavigate();
   const [prompt, setPrompt] = useState("");
-  const [lyric, setLyric] = useState<Lyric>({ kind: "none" });
-  const [customLyric, setCustomLyric] = useState("");
-  const [open, setOpen] = useState(false);
-  const [note, setNote] = useState(false);
+  const [lyricMode, setLyricMode] = useState<LyricMode>("vocal");
+  const [lengthSeconds, setLengthSeconds] = useState(90);
+  const [dismissed, setDismissed] = useState(false);
 
-  const menuRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const { generate, stream, busy, error } = useGenerate({
+    onCompleted: (trackId) => {
+      if (trackId) nav(`/track/${trackId}`);
+    },
+  });
 
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+  const canGenerate = prompt.trim().length > 0 && !busy;
+
+  function onGenerate() {
+    if (busy) return;
+    if (prompt.trim().length === 0) {
+      promptRef.current?.focus();
+      return;
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const lyricLabel =
-    lyric.kind === "none" ? "Add lyric" : lyric.kind === "custom" ? "Custom lyric" : lyric.title;
-
-  const canGenerate = prompt.trim().length > 0;
+    setDismissed(false);
+    const body: GenerateRequest = {
+      prompt: prompt.trim(),
+      // The quick surface takes defaults for everything else; /create is where
+      // genre, mood, BPM and instruments live.
+      genre: null,
+      mood: null,
+      bpm_min: null,
+      bpm_max: null,
+      instruments: [],
+      vocal: lyricMode !== "instrumental",
+      length_seconds: lengthSeconds,
+    };
+    generate.mutate(body);
+  }
 
   return (
     <div className="animate-rise">
+      <JobProgress stream={stream} />
+      {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
+
       <div className="ai-frame">
         <div className="quick-surface p-5">
-          {/* Prompt */}
           <textarea
+            ref={promptRef}
             value={prompt}
-            onChange={(e) => {
-              setPrompt(e.target.value);
-              if (note) setNote(false);
-            }}
+            maxLength={PROMPT_MAX_LENGTH}
+            onChange={(e) => setPrompt(e.target.value)}
+            aria-label="Describe the music you want"
             placeholder="Describe the music you want to create… e.g. dreamy lo-fi with warm piano and soft rain"
             className="min-h-[92px] w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
           />
+          {prompt.length > 1800 && (
+            <p className="text-right text-[11.5px] tabular-nums text-ink-faint">
+              {prompt.length} / {PROMPT_MAX_LENGTH}
+            </p>
+          )}
 
           <div className="my-4 h-px bg-white/[0.07]" />
 
-          {/* Lyric picker — full width */}
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              aria-haspopup="listbox"
-              aria-expanded={open}
-              className="flex w-full items-center justify-between gap-2 rounded-el border border-white/10 bg-white/[0.04] px-4 py-2.5 text-[13.5px] font-medium text-ink-muted transition-colors hover:bg-white/[0.07] hover:text-ink"
-            >
-              <span className="flex items-center gap-2">
-                {lyric.kind === "none" ? (
-                  <Plus className="h-4 w-4" strokeWidth={1.75} />
-                ) : (
-                  <Check className="h-4 w-4 text-brand-soft" strokeWidth={2} />
-                )}
-                {lyricLabel}
-              </span>
-              <ChevronDown
-                className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
-                strokeWidth={1.75}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[12px] font-medium text-ink-muted">Vocals</span>
+              <Segmented<LyricMode>
+                ariaLabel="Vocals"
+                size="sm"
+                value={lyricMode}
+                onChange={setLyricMode}
+                options={[
+                  { value: "vocal", label: "Sung" },
+                  { value: "instrumental", label: "Instrumental" },
+                  {
+                    // There is no user-lyrics path: the worker sends
+                    // "[Instrumental]" or lets the model write the words. Shown
+                    // disabled rather than hidden.
+                    value: "write",
+                    label: "Write lyrics",
+                    disabled: true,
+                    title: "Writing your own lyrics is coming later",
+                  },
+                ]}
               />
-            </button>
+            </div>
 
-            {open && (
-              <div className="quick-surface absolute bottom-full left-0 z-30 mb-2 w-full !rounded-el p-1.5">
-                {SAMPLE_LYRICS.map((l) => (
-                  <button
-                    key={l.id}
-                    type="button"
-                    onClick={() => {
-                      setLyric({ kind: "preview", id: l.id, title: l.title, excerpt: l.excerpt });
-                      setOpen(false);
-                    }}
-                    className="flex w-full flex-col gap-0.5 rounded-[9px] px-3 py-2 text-left transition-colors hover:bg-white/[0.06]"
-                  >
-                    <span className="text-[13.5px] font-medium text-ink">{l.title}</span>
-                    <span className="truncate text-[12px] text-ink-faint">{l.excerpt}</span>
-                  </button>
-                ))}
-                <div className="my-1 h-px bg-white/[0.07]" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLyric({ kind: "custom" });
-                    setOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-[9px] px-3 py-2 text-left text-[13.5px] font-medium text-brand-soft transition-colors hover:bg-white/[0.06]"
-                >
-                  <Plus className="h-4 w-4" strokeWidth={1.75} />
-                  Add custom lyric
-                </button>
-              </div>
-            )}
-
-            {/* Selected preview excerpt */}
-            {lyric.kind === "preview" && (
-              <p className="mt-2.5 truncate text-[12.5px] text-ink-faint">“{lyric.excerpt}”</p>
-            )}
-
-            {/* Custom lyric paste box */}
-            {lyric.kind === "custom" && (
-              <textarea
-                value={customLyric}
-                onChange={(e) => setCustomLyric(e.target.value)}
-                placeholder="Paste your lyrics…"
-                className="glass-input mt-2.5 min-h-[110px] w-full resize-none leading-relaxed"
+            <div className="min-w-[240px] flex-1">
+              <TickSlider
+                label="Length"
+                value={lengthSeconds}
+                onChange={setLengthSeconds}
+                min={LENGTH_MIN_SECONDS}
+                max={LENGTH_MAX_SECONDS}
+                step={5}
+                format={formatDuration}
+                tooltip="How long the generated track will be."
               />
-            )}
+            </div>
           </div>
 
-          {/* Generate — wide, centered */}
           <div className="mt-5 flex flex-col items-center gap-2">
-            <button
-              type="button"
-              disabled={!canGenerate}
-              onClick={() => setNote(true)}
-              className="inline-flex w-full max-w-[340px] items-center justify-center gap-2 rounded-el bg-[linear-gradient(135deg,#7a68fc_0%,#9d4edd_55%,#4cc9f0_140%)] px-6 py-3 text-[14.5px] font-semibold text-white shadow-[0_4px_22px_rgba(108,92,231,0.45)] transition-all hover:-translate-y-px hover:shadow-[0_6px_28px_rgba(108,92,231,0.55)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:translate-y-0"
-            >
-              <Sparkles className="h-4 w-4" strokeWidth={2} />
-              Generate
-            </button>
-            {note && (
-              <span className="text-[12.5px] text-ink-faint">Generation arrives in the next phase.</span>
-            )}
+            <div className={`w-full max-w-[340px] ${busy ? "" : "ai-frame-btn"}`}>
+              <button
+                type="button"
+                disabled={!canGenerate}
+                onClick={onGenerate}
+                className="glass-btn glass-btn-solid w-full rounded-el px-6 py-3 text-[14.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {busy ? "Generating…" : "Generate"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Prompt suggestions (Stitch-style) */}
       <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {SUGGESTIONS.map((s) => (
+        {SUGGESTIONS.map((suggestion) => (
           <button
-            key={s}
+            key={suggestion}
             type="button"
-            onClick={() => {
-              setPrompt(s);
-              setNote(false);
-            }}
+            onClick={() => setPrompt(suggestion)}
             className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] py-1.5 pl-3 pr-3.5 text-[12.5px] text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
           >
             <Music className="h-3.5 w-3.5 flex-shrink-0 text-brand-soft" strokeWidth={1.75} />
-            <span className="max-w-[230px] truncate">{s}</span>
+            <span className="max-w-[230px] truncate">{suggestion}</span>
           </button>
         ))}
       </div>
