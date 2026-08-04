@@ -28,8 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a misspelled env var falls back to the default rather than erroring.
     if (
         settings.environment == "prod"
-        and settings.sse_token_secret.get_secret_value()
-        == _DEFAULT_SSE_SECRET
+        and settings.sse_token_secret.get_secret_value() == _DEFAULT_SSE_SECRET
     ):
         raise RuntimeError(
             "SSE_TOKEN_SECRET is the public default in prod — refusing to start"
@@ -46,9 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.sweeper_enabled:
         from app.modules.generation.service import generation_service
 
-        sweeper = asyncio.create_task(
-            generation_service.run_sweeper(app.state.sse_hub)
-        )
+        sweeper = asyncio.create_task(generation_service.run_sweeper(app.state.sse_hub))
         logger.info(
             "sweeper_started",
             interval_seconds=settings.sweeper_interval_seconds,
@@ -70,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await sweeper
 
     from app.shared.db import close_db_engines
+
     await close_db_engines()
     logger.info("shutdown_complete")
 
@@ -133,7 +131,7 @@ def create_app() -> FastAPI:
     from app.modules.identity.api import router as identity_router
     from app.shared import health
 
-    app.include_router(health.router)                    # /health, /health/deep
+    app.include_router(health.router)  # /health, /health/deep
     app.include_router(identity_router, prefix="/api/v1")
     # Generation BEFORE catalog: they share the /tracks prefix, generation
     # owning the POST verbs and catalog the GET/DELETE. They cannot collide

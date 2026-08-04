@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     # Runtime environment
-    environment: str = "local"   # local | prod — drives SSL, docs visibility, etc.
+    environment: str = "local"  # local | prod — drives SSL, docs visibility, etc.
 
     # Browser origins allowed to call this API cross-origin, comma-separated.
     # This exists ONLY so `npm run dev` on localhost:5173 works. Production is
@@ -34,11 +34,11 @@ class Settings(BaseSettings):
     db_generation_dsn: SecretStr
     db_conversation_dsn: SecretStr
     db_personalization_dsn: SecretStr
-    db_require_ssl: bool = False   # true when targeting RDS (asyncpg ssl + sslmode)
+    db_require_ssl: bool = False  # true when targeting RDS (asyncpg ssl + sslmode)
 
     # AWS infrastructure
     aws_region: str = "us-east-1"
-    aws_endpoint_url: str | None = None   # set to LocalStack URL in local/test envs
+    aws_endpoint_url: str | None = None  # set to LocalStack URL in local/test envs
     assets_bucket: str
     sqs_jobs_queue_url: str
     sns_completions_topic_arn: str

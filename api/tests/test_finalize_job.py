@@ -15,6 +15,7 @@ Two properties are under test and both are load-bearing for Gate C:
    in test_catalog_live.py proves the transaction actually holds against
    Postgres, including the cross-schema grant.
 """
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -62,9 +63,7 @@ class FakeTrackWriter:
         self.calls: list[dict[str, Any]] = []
         self.sessions: list[Any] = []
 
-    async def create_track_in_txn(
-        self, session: Any, **kwargs: Any
-    ) -> CreatedTrack:
+    async def create_track_in_txn(self, session: Any, **kwargs: Any) -> CreatedTrack:
         self.sessions.append(session)
         self.calls.append(kwargs)
         return {
@@ -92,9 +91,7 @@ def _patch_presign(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_presign(key: str, expires: int = 900) -> str:
         return f"https://s3.example/{key}?X-Amz-Expires={expires}"
 
-    monkeypatch.setattr(
-        generation_service_module, "presign_get", fake_presign
-    )
+    monkeypatch.setattr(generation_service_module, "presign_get", fake_presign)
 
 
 def _service(writer: FakeTrackWriter | None = None) -> GenerationService:
@@ -146,7 +143,7 @@ async def test_completed_writes_track_on_the_same_session(
     await _service(writer).finalize_job(**_completed_kwargs(hub))
 
     assert len(writer.calls) == 1
-    assert writer.sessions == [session]     # the generation session, not a new one
+    assert writer.sessions == [session]  # the generation session, not a new one
 
     call = writer.calls[0]
     assert call["user_id"] == _USER
@@ -173,8 +170,8 @@ async def test_track_is_written_before_the_transaction_closes(
 
     await _service(writer).finalize_job(**_completed_kwargs(hub))
 
-    assert writer.sessions[0].executed[0][0].strip().startswith(
-        "UPDATE generation.jobs"
+    assert (
+        writer.sessions[0].executed[0][0].strip().startswith("UPDATE generation.jobs")
     )
 
 
@@ -193,7 +190,7 @@ async def test_failed_publishes_error_and_writes_no_track(
     event = queue.get_nowait()
     assert event["event"] == "failed"
     assert event["data"]["error"] == "CUDA OOM"
-    assert writer.calls == []       # a failed job has no track
+    assert writer.calls == []  # a failed job has no track
 
 
 @pytest.mark.asyncio
@@ -209,7 +206,7 @@ async def test_already_terminal_does_not_publish_or_write_track(
     await _service(writer).finalize_job(**_completed_kwargs(hub))
 
     assert queue.empty()
-    assert writer.calls == []       # no duplicate track
+    assert writer.calls == []  # no duplicate track
 
 
 @pytest.mark.asyncio

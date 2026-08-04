@@ -7,6 +7,7 @@ so they do not block the async event loop.
 Phase 1: `AdminConfirmSignUp` is called immediately after `SignUp` so users can log in
 without completing an email verification step.
 """
+
 import base64
 import hashlib
 import hmac
@@ -45,7 +46,6 @@ def _secret_hash(username: str) -> str:
 
 
 class IdentityService:
-
     async def signup(
         self,
         db: AsyncSession,

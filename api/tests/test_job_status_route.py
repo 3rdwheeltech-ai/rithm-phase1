@@ -8,7 +8,8 @@ the catalog join stays inside the two columns rithm_generation is granted —
 widen it and the failure is a runtime permission error, which no type checker
 will catch for you.
 """
-from collections.abc import AsyncIterator, Iterator
+
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -60,7 +61,7 @@ def session_rows(
     state: dict[str, Any] = {"opened": [], "rows": []}
 
     @asynccontextmanager
-    async def _session(module: str) -> AsyncIterator[FakeSession]:
+    async def _session(module: str) -> AsyncGenerator[FakeSession]:
         session = FakeSession(results=[list(state["rows"])])
         session.module = module  # type: ignore[attr-defined]
         state["opened"].append(session)
@@ -100,9 +101,7 @@ def presigned(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         keys.append(key)
         return f"https://s3.example/{key}?X-Amz-Expires={expires}"
 
-    monkeypatch.setattr(
-        "app.modules.generation.api.presign_get", _presign
-    )
+    monkeypatch.setattr("app.modules.generation.api.presign_get", _presign)
     return keys
 
 

@@ -12,6 +12,7 @@ an autogenerate diff proposing to drop every unmapped table.
 The table itself already exists (migrations/generation/versions/
 0001_generation_baseline.py). Nothing here migrates it.
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum

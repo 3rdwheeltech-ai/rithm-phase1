@@ -5,6 +5,7 @@ Happy-path signup/login/refresh hit the real dev Cognito pool and are verified
 manually (spec Step 14). Here we cover the guard rails: bearer-token rejection
 and request validation.
 """
+
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -17,6 +18,7 @@ from app.shared.db import get_identity_db
 @pytest.fixture
 def no_db() -> Iterator[None]:
     """Override the DB dependency — these paths must reject before touching the DB."""
+
     async def _null_db() -> AsyncIterator[None]:
         yield None
 

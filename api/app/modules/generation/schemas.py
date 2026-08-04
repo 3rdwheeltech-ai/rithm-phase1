@@ -8,6 +8,7 @@ range→scalar collapse happens in the public generate route, which is Day 3.
 Keeping the two types distinct is what stops that collapse from leaking
 backwards into the envelope.
 """
+
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self, TypedDict

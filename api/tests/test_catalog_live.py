@@ -21,6 +21,7 @@ evidence the grant is as narrow as intended.
 Skipped unless RITHM_TEST_DB_DSN and RITHM_TEST_DB_ADMIN_DSN are set; see
 tests/conftest.py for setup.
 """
+
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -163,17 +164,21 @@ async def test_generation_role_can_write_a_track_and_its_prompt(
     assert await _count_prompts(admin_session, job_ids["job"]) == 1
 
     row = (
-        await admin_session.execute(
-            text(
-                """
+        (
+            await admin_session.execute(
+                text(
+                    """
                 SELECT genre, mood, bpm, vocal, length_seconds, prompt,
                        params, s3_wav_key, s3_mp3_key, waveform_hash
                   FROM catalog.tracks WHERE source_job_id = :jid
                 """
-            ),
-            {"jid": str(job_ids["job"])},
+                ),
+                {"jid": str(job_ids["job"])},
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
 
     assert row["genre"] == "Lo-Fi"
     assert row["mood"] == "Calm"
@@ -181,7 +186,7 @@ async def test_generation_role_can_write_a_track_and_its_prompt(
     assert row["vocal"] is False
     assert row["length_seconds"] == 30
     assert row["prompt"] == _PARAMS["prompt"]
-    assert row["params"] == _PARAMS          # round-tripped through JSONB
+    assert row["params"] == _PARAMS  # round-tripped through JSONB
     assert row["s3_wav_key"] == _WAV_KEY
     assert row["waveform_hash"].strip() == "a" * 64
     assert created["mp3_key"] == _MP3_KEY
@@ -232,15 +237,11 @@ async def test_grant_does_not_expose_track_content(
     from sqlalchemy.exc import ProgrammingError
 
     with pytest.raises(ProgrammingError, match="permission denied"):
-        await live_session.execute(
-            text("SELECT prompt FROM catalog.tracks LIMIT 1")
-        )
+        await live_session.execute(text("SELECT prompt FROM catalog.tracks LIMIT 1"))
     await live_session.rollback()
 
     # ...while the one column the arbiter needs is readable.
-    await live_session.execute(
-        text("SELECT source_job_id FROM catalog.tracks LIMIT 1")
-    )
+    await live_session.execute(text("SELECT source_job_id FROM catalog.tracks LIMIT 1"))
 
 
 # ── finalize_job end to end ────────────────────────────────────
@@ -296,16 +297,20 @@ async def test_completed_finalize_writes_all_three_rows(
 
     # The job row carries the outputs the SSE replay path reads back.
     row = (
-        await admin_session.execute(
-            text(
-                """
+        (
+            await admin_session.execute(
+                text(
+                    """
                 SELECT s3_wav_key, s3_mp3_key, duration_seconds, worker_id
                   FROM generation.jobs WHERE id = :jid
                 """
-            ),
-            {"jid": str(job_ids["job"])},
+                ),
+                {"jid": str(job_ids["job"])},
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
     assert row["s3_wav_key"] == _WAV_KEY
     assert row["s3_mp3_key"] == _MP3_KEY
     assert row["duration_seconds"] == 30
@@ -323,12 +328,12 @@ async def test_replayed_finalize_is_a_no_op(
     _presigned(monkeypatch)
 
     await _service().finalize_job(**_completed(hub, job_ids["job"]))
-    queue = hub.subscribe(str(job_ids["job"]))   # subscribe AFTER the first
-    await _service().finalize_job(**_completed(hub, job_ids["job"]))   # replay
+    queue = hub.subscribe(str(job_ids["job"]))  # subscribe AFTER the first
+    await _service().finalize_job(**_completed(hub, job_ids["job"]))  # replay
 
     assert await _count_tracks(admin_session, job_ids["job"]) == 1
     assert await _count_prompts(admin_session, job_ids["job"]) == 1
-    assert queue.empty()                          # no second `completed` frame
+    assert queue.empty()  # no second `completed` frame
 
 
 @pytest.mark.usefixtures("live_generation_engine")
@@ -348,11 +353,15 @@ async def test_failed_finalize_writes_no_track(
     )
 
     row = (
-        await admin_session.execute(
-            text("SELECT status, error FROM generation.jobs WHERE id = :jid"),
-            {"jid": str(job_ids["job"])},
+        (
+            await admin_session.execute(
+                text("SELECT status, error FROM generation.jobs WHERE id = :jid"),
+                {"jid": str(job_ids["job"])},
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
     assert row["status"] == "FAILED"
     assert row["error"] == "CUDA out of memory"
     assert await _count_tracks(admin_session, job_ids["job"]) == 0
@@ -511,9 +520,7 @@ async def seeded_tracks(
     owner, stranger = _uuid(), _uuid()
     job = _uuid()
 
-    async def _insert(
-        user_id: UUID, index: int, deleted: bool = False
-    ) -> UUID:
+    async def _insert(user_id: UUID, index: int, deleted: bool = False) -> UUID:
         track_id = _uuid()
         await admin_session.execute(
             text(
@@ -621,9 +628,7 @@ async def test_list_excludes_deleted_and_other_users(
     service = CatalogService()
     owner = seeded_tracks["owner"]
 
-    tracks, _, total = await service.list_tracks(
-        user_id=owner, limit=100, cursor=None
-    )
+    tracks, _, total = await service.list_tracks(user_id=owner, limit=100, cursor=None)
     returned = {track.id for track in tracks}
 
     assert seeded_tracks["deleted"] not in returned
@@ -632,12 +637,14 @@ async def test_list_excludes_deleted_and_other_users(
 
     # ...and the same two are unreachable by direct fetch, as 404s rather than
     # as 403s: get_track cannot distinguish "deleted", "not yours" and "absent".
-    assert await service.get_track(
-        track_id=seeded_tracks["deleted"], user_id=owner
-    ) is None
-    assert await service.get_track(
-        track_id=seeded_tracks["foreign"], user_id=owner
-    ) is None
+    assert (
+        await service.get_track(track_id=seeded_tracks["deleted"], user_id=owner)
+        is None
+    )
+    assert (
+        await service.get_track(track_id=seeded_tracks["foreign"], user_id=owner)
+        is None
+    )
 
 
 @pytest.mark.usefixtures("live_catalog_engine")
@@ -659,18 +666,14 @@ async def test_soft_delete_hides_the_row_but_keeps_it(
 
     row = (
         await admin_session.execute(
-            text(
-                "SELECT deleted_at FROM catalog.tracks WHERE id = :id"
-            ),
+            text("SELECT deleted_at FROM catalog.tracks WHERE id = :id"),
             {"id": str(target)},
         )
     ).first()
     assert row is not None, "soft delete must not remove the row"
     assert row.deleted_at is not None
 
-    _, _, total = await service.list_tracks(
-        user_id=owner, limit=100, cursor=None
-    )
+    _, _, total = await service.list_tracks(user_id=owner, limit=100, cursor=None)
     assert total == 24
 
 

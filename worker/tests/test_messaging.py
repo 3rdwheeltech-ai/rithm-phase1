@@ -8,6 +8,7 @@ redelivery harmless, but it burns one of three receives — and three of those
 send a healthy job to the DLQ and page someone at 3am. The GPU taskdef sets
 900; this is the code that lets it take effect.
 """
+
 from typing import Any
 
 import pytest

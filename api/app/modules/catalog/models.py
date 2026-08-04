@@ -9,6 +9,7 @@ because migrations are hand-written DDL.
 The tables already exist (migrations/catalog/versions/0001_catalog_baseline.py).
 Nothing here migrates them.
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, TypedDict
@@ -57,20 +58,30 @@ class ParentTrack(TypedDict):
 # ("values are open-ended"), so these tuples are the only place the vocabulary
 # is written down.
 GENRES: tuple[str, ...] = (
-    "Pop", "Hip-Hop", "EDM", "Lo-Fi", "Cinematic",
-    "Rock", "Country", "R&B", "Ambient",
+    "Pop",
+    "Hip-Hop",
+    "EDM",
+    "Lo-Fi",
+    "Cinematic",
+    "Rock",
+    "Country",
+    "R&B",
+    "Ambient",
 )
 MOODS: tuple[str, ...] = (
-    "Happy", "Calm", "Energetic", "Dark",
-    "Romantic", "Inspirational", "Dramatic",
+    "Happy",
+    "Calm",
+    "Energetic",
+    "Dark",
+    "Romantic",
+    "Inspirational",
+    "Dramatic",
 )
 
 # Mirrors the prompt_kind_vals CHECK constraint. Note `remix` is valid here but
 # is NOT a generation.jobs kind — the two vocabularies differ on purpose, which
 # is exactly why the map below exists instead of passing job kind through.
-PromptKind = Literal[
-    "initial", "refine_fresh", "refine_audio", "remix", "variation"
-]
+PromptKind = Literal["initial", "refine_fresh", "refine_audio", "remix", "variation"]
 PROMPT_KINDS: frozenset[str] = frozenset(
     {"initial", "refine_fresh", "refine_audio", "remix", "variation"}
 )

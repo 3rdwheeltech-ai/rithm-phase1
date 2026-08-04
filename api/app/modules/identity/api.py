@@ -23,18 +23,18 @@ _settings = get_settings()
 
 # Map Cognito error codes to HTTP status codes.
 _COGNITO_HTTP: dict[str, int] = {
-    "UsernameExistsException":      status.HTTP_409_CONFLICT,
-    "InvalidPasswordException":     status.HTTP_400_BAD_REQUEST,
-    "InvalidParameterException":    status.HTTP_400_BAD_REQUEST,
-    "NotAuthorizedException":       status.HTTP_401_UNAUTHORIZED,
-    "UserNotFoundException":        status.HTTP_401_UNAUTHORIZED,
-    "UserNotConfirmedException":    status.HTTP_403_FORBIDDEN,
+    "UsernameExistsException": status.HTTP_409_CONFLICT,
+    "InvalidPasswordException": status.HTTP_400_BAD_REQUEST,
+    "InvalidParameterException": status.HTTP_400_BAD_REQUEST,
+    "NotAuthorizedException": status.HTTP_401_UNAUTHORIZED,
+    "UserNotFoundException": status.HTTP_401_UNAUTHORIZED,
+    "UserNotConfirmedException": status.HTTP_403_FORBIDDEN,
 }
 
 
 def _http(err: ClientError) -> HTTPException:
     code = err.response["Error"]["Code"]
-    msg  = err.response["Error"].get("Message", code)
+    msg = err.response["Error"].get("Message", code)
     return HTTPException(_COGNITO_HTTP.get(code, status.HTTP_400_BAD_REQUEST), msg)
 
 
@@ -94,7 +94,7 @@ async def refresh(
         raise _http(exc) from exc
     return TokenResponse(
         id_token=result["IdToken"],
-        refresh_token=None,          # Cognito does not rotate the refresh token here
+        refresh_token=None,  # Cognito does not rotate the refresh token here
         expires_in=result["ExpiresIn"],
         token_type=result["TokenType"],
     )

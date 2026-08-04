@@ -6,6 +6,7 @@ Validates Cognito RS256 id_tokens via JWKS (keys cached in-process).
 `require_user`   — resolves cognito_sub → local `identity.users.id` (lazy-creates row if
                    this is the user's first request after signup).
 """
+
 from typing import Any, cast
 from uuid import UUID
 

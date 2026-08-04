@@ -18,6 +18,7 @@ addition too.
 Ownership misses on variation/refine return 404, never 403. A 403 tells an
 attacker the track exists.
 """
+
 import asyncio
 import json
 from collections.abc import AsyncIterator
@@ -248,9 +249,7 @@ async def refine_track(
     params = GenerationParams.model_validate(
         {
             **parent["params"],
-            "prompt": compose_refined_prompt(
-                parent["prompt"], body.delta_command
-            ),
+            "prompt": compose_refined_prompt(parent["prompt"], body.delta_command),
             "delta_command": body.delta_command,
             "seed": new_seed(),
         }
@@ -288,9 +287,7 @@ async def _event_stream(hub: SSEHub, job_id: str) -> AsyncIterator[str]:
 
         while asyncio.get_running_loop().time() < deadline:
             try:
-                event = await asyncio.wait_for(
-                    queue.get(), timeout=_HEARTBEAT_SECONDS
-                )
+                event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
             except TimeoutError:
                 # A NAMED event, not the conventional `: keepalive` comment.
                 # Comments are invisible to the browser's EventSource — no
@@ -348,11 +345,7 @@ async def job_status(
         completed_at=row.completed_at,
         error=row.error,
         track_id=row.track_id,
-        mp3_url=(
-            presign_get(row.s3_mp3_key)
-            if completed and row.s3_mp3_key
-            else None
-        ),
+        mp3_url=(presign_get(row.s3_mp3_key) if completed and row.s3_mp3_key else None),
     )
 
 
@@ -367,9 +360,7 @@ async def job_events(
     EventSource cannot send an Authorization header.
     """
     try:
-        payload = verify(
-            token, _settings.sse_token_secret.get_secret_value()
-        )
+        payload = verify(token, _settings.sse_token_secret.get_secret_value())
     except SSETokenExpired as exc:
         # Distinct from every other 401 so the client can tell "poll instead"
         # from "log out" — see SSETokenExpiredException.
@@ -380,9 +371,7 @@ async def job_events(
         ) from exc
 
     if payload.get("jid") != job_id:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Token/job mismatch"
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token/job mismatch")
 
     hub: SSEHub = request.app.state.sse_hub
     return StreamingResponse(
@@ -451,9 +440,7 @@ async def on_job_completion(request: Request) -> Response:
     return Response(status_code=status.HTTP_200_OK)
 
 
-@dev_router.post(
-    "/internal/dev/enqueue-test-job", response_model=DevEnqueueResponse
-)
+@dev_router.post("/internal/dev/enqueue-test-job", response_model=DevEnqueueResponse)
 async def enqueue_test_job(body: DevEnqueueRequest) -> DevEnqueueResponse:
     """
     Drive the full write path without an auth flow. Gate C leans on this.
@@ -461,9 +448,7 @@ async def enqueue_test_job(body: DevEnqueueRequest) -> DevEnqueueResponse:
     Mounted only when settings.rithm_dev_endpoints is true — guarded at
     include_router() time, so in prod the route simply does not exist.
     """
-    params = body.params or GenerationParams(
-        prompt="stub test tone", length_seconds=30
-    )
+    params = body.params or GenerationParams(prompt="stub test tone", length_seconds=30)
     # No rate_limit: dev-enqueue must be able to drive a gate repeatedly
     # without burning a real user's daily budget.
     job_id, _ = await generation_service.submit(

@@ -6,6 +6,7 @@ with the literal filenames `master.wav` and `audio.mp3`. Gate C4 greps for both,
 the task role scopes PutObject to `tracks/*`, and the API presigns the mp3 key
 straight out of the SNS envelope.
 """
+
 from pathlib import Path
 
 import structlog

@@ -5,6 +5,7 @@ for Alembic, and (when targeting RDS) appends sslmode=require — psycopg2 reads
 from the URL, not asyncpg's ssl= connect-arg. target_metadata is None: migrations
 are hand-written raw SQL via op.execute(), not ORM autogenerate.
 """
+
 import os
 import sys
 

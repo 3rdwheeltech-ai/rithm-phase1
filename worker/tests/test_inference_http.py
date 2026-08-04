@@ -11,6 +11,7 @@ under test IS the HTTP call — a fake client would let a wrong URL, a wrong ver
 or a mis-serialised body pass unnoticed, which is exactly the class of bug this
 file exists to catch.
 """
+
 # The poll deadline and caption helpers are private and probed directly: they
 # are arithmetic and string composition, and reaching them through generate()
 # would prove less while taking a real timeout to do it.
@@ -41,9 +42,7 @@ def fast_polling(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _model(handler: Handler) -> inference.AceStepHttpModel:
-    client = httpx.Client(
-        transport=httpx.MockTransport(handler), base_url=BASE
-    )
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url=BASE)
     return inference.AceStepHttpModel(client)
 
 
@@ -62,16 +61,12 @@ def _generate(model: inference.AceStepHttpModel, **overrides: Any) -> Path:
     return model.generate(**kwargs)
 
 
-def _patch_client(
-    monkeypatch: pytest.MonkeyPatch, handler: Handler
-) -> None:
+def _patch_client(monkeypatch: pytest.MonkeyPatch, handler: Handler) -> None:
     """Swap the client factory so load_acestep_model's probe hits our handler."""
 
     def build(base_url: str, timeout: float) -> httpx.Client:
         _ = timeout
-        return httpx.Client(
-            transport=httpx.MockTransport(handler), base_url=base_url
-        )
+        return httpx.Client(transport=httpx.MockTransport(handler), base_url=base_url)
 
     monkeypatch.setattr(inference, "_build_client", build)
 
@@ -97,8 +92,11 @@ def _succeeding_handler(
             body: dict[str, Any] = {
                 "status": 1,
                 "result": [{"file": result_file} if result_file else {}],
-                "generation_info": {"lm_seconds": 8.2, "dit_seconds": 2.4,
-                                    "seed_value": 42},
+                "generation_info": {
+                    "lm_seconds": 8.2,
+                    "dit_seconds": 2.4,
+                    "seed_value": 42,
+                },
             }
             return httpx.Response(200, json=body)
         if request.url.path == "/v1/audio":
@@ -238,9 +236,7 @@ def test_polls_until_succeeded_then_downloads_the_audio() -> None:
 
     polls = [r for r in seen if r.url.path == "/query_result"]
     assert len(polls) == 3
-    assert json.loads(polls[0].content) == {
-        "task_id_list": ["task-abc"]
-    }
+    assert json.loads(polls[0].content) == {"task_id_list": ["task-abc"]}
 
     download = next(r for r in seen if r.url.path == "/v1/audio")
     assert download.url.params["path"] == "/out/track-1.wav"
@@ -275,9 +271,7 @@ def test_a_failed_status_is_permanent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/release_task":
             return httpx.Response(200, json={"task_id": "t"})
-        return httpx.Response(
-            200, json={"status": 2, "message": "out of memory"}
-        )
+        return httpx.Response(200, json={"status": 2, "message": "out of memory"})
 
     with pytest.raises(inference.InferenceError, match="out of memory"):
         _generate(_model(handler))

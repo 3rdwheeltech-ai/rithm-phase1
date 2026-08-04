@@ -9,6 +9,7 @@ decision, not a Day-1 one.
 One event loop and cooperative scheduling mean a plain dict/set is safe, as
 long as publish() snapshots before iterating.
 """
+
 import asyncio
 from collections import defaultdict
 from contextlib import suppress

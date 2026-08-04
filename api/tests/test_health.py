@@ -46,9 +46,7 @@ async def test_health_does_no_db_io(
         raise AssertionError("/health must not touch the database")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(
-        "app.shared.health.get_session", exploding_session
-    )
+    monkeypatch.setattr("app.shared.health.get_session", exploding_session)
     assert (await async_client.get("/health")).status_code == 200
 
 
@@ -73,9 +71,7 @@ def _fake_session_factory(
 async def test_health_deep_all_ok(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "app.shared.health.get_session", _fake_session_factory(set())
-    )
+    monkeypatch.setattr("app.shared.health.get_session", _fake_session_factory(set()))
     response = await async_client.get("/health/deep")
     assert response.status_code == 200
     body = response.json()

@@ -4,11 +4,19 @@ import structlog
 from structlog.typing import EventDict, WrappedLogger
 
 # Keys whose values must NEVER appear in logs
-_SENSITIVE_KEYS = frozenset({
-    "password", "id_token", "refresh_token", "api_key",
-    "authorization", "access_key", "secret_key",
-    "cognito_sub", "openai_api_key",
-})
+_SENSITIVE_KEYS = frozenset(
+    {
+        "password",
+        "id_token",
+        "refresh_token",
+        "api_key",
+        "authorization",
+        "access_key",
+        "secret_key",
+        "cognito_sub",
+        "openai_api_key",
+    }
+)
 
 
 def _scrub_sensitive(

@@ -10,6 +10,7 @@ request-scoped session is torn down only after the response completes, so a
 Direction of travel is fixed: this module SendMessages to SQS and never
 receives; the Day-2 worker is the only consumer.
 """
+
 import asyncio
 import json
 import secrets
@@ -133,7 +134,6 @@ def compose_refined_prompt(base: str, delta: str) -> str:
 
 
 class GenerationService:
-
     def __init__(
         self,
         track_writer: TrackWriter | None = None,
@@ -214,9 +214,7 @@ class GenerationService:
             "kind": kind,
             "params": payload,
             "audio_reference_url": None,
-            "parent_track_id": (
-                str(parent_track_id) if parent_track_id else None
-            ),
+            "parent_track_id": (str(parent_track_id) if parent_track_id else None),
             "callback_topic_arn": _settings.sns_completions_topic_arn,
             "submitted_at": datetime.now(UTC).isoformat(),
         }
@@ -234,9 +232,7 @@ class GenerationService:
             # out the sweeper's 30 minutes. The sweeper is still the backstop
             # for the case where even this write fails.
             logger.exception("enqueue_failed", job_id=str(job_id))
-            await self._fail_job(
-                job_id, "could not be scheduled — please try again"
-            )
+            await self._fail_job(job_id, "could not be scheduled — please try again")
             raise EnqueueFailedError(str(job_id)) from exc
 
         logger.info("job_submitted", job_id=str(job_id), kind=kind)
@@ -266,9 +262,7 @@ class GenerationService:
             "user_id": str(user_id),
             "kind": kind,
             "payload": json.dumps(payload),
-            "parent_track_id": (
-                str(parent_track_id) if parent_track_id else None
-            ),
+            "parent_track_id": (str(parent_track_id) if parent_track_id else None),
         }
 
         if rate_limit is None:
@@ -326,9 +320,7 @@ class GenerationService:
             return datetime.now(UTC)
         return cast(datetime, row.created_at)
 
-    async def _used_in_window(
-        self, session: AsyncSession, user_id: UUID
-    ) -> int:
+    async def _used_in_window(self, session: AsyncSession, user_id: UUID) -> int:
         result = (
             await session.execute(
                 text(RATE_WINDOW_COUNT_SQL), {"user_id": str(user_id)}
@@ -336,9 +328,7 @@ class GenerationService:
         ).first()
         return int(result[0]) if result else 0
 
-    async def _retry_after(
-        self, session: AsyncSession, user_id: UUID
-    ) -> int:
+    async def _retry_after(self, session: AsyncSession, user_id: UUID) -> int:
         """
         Seconds until the oldest job in the window falls out of it.
 
@@ -522,16 +512,12 @@ class GenerationService:
             if updated is None:
                 existing = (
                     await session.execute(
-                        text(
-                            "SELECT status FROM generation.jobs WHERE id = :id"
-                        ),
+                        text("SELECT status FROM generation.jobs WHERE id = :id"),
                         {"id": str(job_id)},
                     )
                 ).first()
                 if existing is None:
-                    logger.warning(
-                        "finalize_job_unknown_id", job_id=str(job_id)
-                    )
+                    logger.warning("finalize_job_unknown_id", job_id=str(job_id))
                 else:
                     logger.info(
                         "finalize_job_already_terminal",
@@ -562,9 +548,7 @@ class GenerationService:
                     "s3_mp3_key": s3_mp3_key,
                     "s3_wav_key": s3_wav_key,
                     "duration_seconds": duration_seconds,
-                    "track_id": (
-                        str(created["track_id"]) if created else None
-                    ),
+                    "track_id": (str(created["track_id"]) if created else None),
                     "mp3_url": (
                         presign_get(s3_mp3_key, expires=_MP3_URL_TTL_SECONDS)
                         if s3_mp3_key
@@ -579,9 +563,7 @@ class GenerationService:
             }
 
         hub.publish(str(job_id), event)
-        logger.info(
-            "job_finalized", job_id=str(job_id), status=status
-        )
+        logger.info("job_finalized", job_id=str(job_id), status=status)
 
     async def _write_track(
         self,
@@ -769,9 +751,7 @@ def _job_to_event(job: JobRow) -> SSEEvent:
             "event": "running",
             "data": {
                 "job_id": str(job.id),
-                "started_at": (
-                    job.started_at.isoformat() if job.started_at else None
-                ),
+                "started_at": (job.started_at.isoformat() if job.started_at else None),
             },
         }
     # estimated_start_seconds is the cheapest possible cold-start UX: the risk
@@ -784,9 +764,7 @@ def _job_to_event(job: JobRow) -> SSEEvent:
         "event": "queued",
         "data": {
             "job_id": str(job.id),
-            "estimated_start_seconds": (
-                get_settings().estimated_cold_start_seconds
-            ),
+            "estimated_start_seconds": (get_settings().estimated_cold_start_seconds),
         },
     }
 

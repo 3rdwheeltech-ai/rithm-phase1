@@ -33,6 +33,7 @@ def init_db_engines() -> None:
     Creates one AsyncEngine + sessionmaker per module.
     """
     from app.config import get_settings
+
     settings = get_settings()
 
     for module, dsn_field in _MODULE_DSN_GETTERS.items():

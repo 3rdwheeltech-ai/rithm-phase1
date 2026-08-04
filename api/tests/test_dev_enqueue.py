@@ -6,6 +6,7 @@ LocalStack round-trip would be testing botocore; what matters here is that the
 envelope matches §2.1 exactly, because the Day-2 worker is being built to parse
 it.
 """
+
 import json
 from contextlib import asynccontextmanager
 from typing import Any
@@ -42,9 +43,7 @@ def sqs_messages(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         )
         return "msg-1"
 
-    monkeypatch.setattr(
-        generation_service_module, "send_sqs_message", _capture
-    )
+    monkeypatch.setattr(generation_service_module, "send_sqs_message", _capture)
     return sent
 
 
@@ -119,9 +118,7 @@ async def test_enqueue_writes_row_and_message(
     assert envelope["job_id"] == job_id
     assert envelope["user_id"] == _SYNTHETIC_USER
     assert envelope["kind"] == "generate"
-    assert envelope["callback_topic_arn"] == (
-        get_settings().sns_completions_topic_arn
-    )
+    assert envelope["callback_topic_arn"] == (get_settings().sns_completions_topic_arn)
     assert envelope["audio_reference_url"] is None
     assert envelope["parent_track_id"] is None
     assert "submitted_at" in envelope

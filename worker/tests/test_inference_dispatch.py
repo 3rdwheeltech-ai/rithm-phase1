@@ -11,6 +11,7 @@ Nothing here imports torch, and nothing here needs the model to exist — a fake
 MusicModel recording its kwargs is a stronger statement about the contract than
 a real one would be.
 """
+
 # _compose_caption is private to inference.py and tested directly on purpose: it
 # is the function most likely to silently degrade output quality, and pinning it
 # through the public path would need a model server.
@@ -202,9 +203,7 @@ def test_compose_caption_omits_absent_controls() -> None:
     assert inference._compose_caption("just a prompt", None, None, []) == (
         "just a prompt"
     )
-    assert inference._compose_caption("  padded  ", "EDM", None, []) == (
-        "padded, EDM"
-    )
+    assert inference._compose_caption("  padded  ", "EDM", None, []) == ("padded, EDM")
 
 
 def test_caption_carries_neither_bpm_nor_vocal() -> None:

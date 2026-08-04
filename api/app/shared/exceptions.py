@@ -59,8 +59,7 @@ class EnqueueFailedException(HTTPException):
         super().__init__(
             status_code=503,
             detail=(
-                "Your generation could not be scheduled. "
-                "Please try again in a moment."
+                "Your generation could not be scheduled. Please try again in a moment."
             ),
             headers={"Retry-After": str(retry_after_seconds)},
         )

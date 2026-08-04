@@ -40,6 +40,7 @@ server takes no discrete genre/mood/instrument fields — and `vocal=False` is
 expressed as the literal lyric `[Instrumental]`. Both are PoC findings, both
 are pinned by tests, and neither is a detail to tidy.
 """
+
 import json
 import os
 import shutil
@@ -193,9 +194,7 @@ def _task_state(payload: Any) -> dict[str, Any]:
         payload = items[0]
     state = _as_dict(payload)
     if state is None:
-        raise InferenceError(
-            f"unexpected /query_result body: {str(payload)[:200]}"
-        )
+        raise InferenceError(f"unexpected /query_result body: {str(payload)[:200]}")
     return state
 
 
@@ -363,12 +362,11 @@ class AceStepHttpModel:
             task_id = body.get("task_id") if body is not None else None
             if not task_id:
                 raise InferenceError(
-                    "ACE-Step /release_task returned no task_id: "
-                    f"{str(raw)[:200]}"
+                    f"ACE-Step /release_task returned no task_id: {str(raw)[:200]}"
                 )
             return str(task_id)
 
-        assert last is not None    # the loop only exits here after a failure
+        assert last is not None  # the loop only exits here after a failure
         raise last
 
     def _poll_deadline(self, length_s: int) -> float:
@@ -392,9 +390,7 @@ class AceStepHttpModel:
                 # A poll that fails is NOT a job that failed — the generation is
                 # still running on the server. Keep polling until the deadline
                 # rather than throwing away work we have already paid for.
-                logger.warning(
-                    "acestep_poll_failed", task_id=task_id, error=str(exc)
-                )
+                logger.warning("acestep_poll_failed", task_id=task_id, error=str(exc))
                 state = {}
 
             status = state.get("status")
@@ -431,16 +427,12 @@ class AceStepHttpModel:
         the difference between a clean decode and a guess.
         """
         try:
-            response = self._client.get(
-                "/v1/audio", params={"path": remote_path}
-            )
+            response = self._client.get("/v1/audio", params={"path": remote_path})
             response.raise_for_status()
             data = response.content
         except httpx.HTTPError as exc:
             raise InferenceError(
-                f"ACE-Step audio download failed: {type(exc).__name__}: {exc}"[
-                    :500
-                ]
+                f"ACE-Step audio download failed: {type(exc).__name__}: {exc}"[:500]
             ) from exc
 
         suffix = Path(remote_path).suffix or ".wav"
@@ -491,8 +483,7 @@ def load_acestep_model() -> MusicModel | None:
     except httpx.HTTPError as exc:
         client.close()
         raise RuntimeError(
-            f"ACE-Step server unreachable at {base_url}: "
-            f"{type(exc).__name__}: {exc}"
+            f"ACE-Step server unreachable at {base_url}: {type(exc).__name__}: {exc}"
         ) from exc
 
     # Tri watches for this exact line before enqueuing the first real job (Dev

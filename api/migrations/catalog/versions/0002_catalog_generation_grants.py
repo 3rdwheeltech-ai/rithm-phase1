@@ -39,6 +39,7 @@ Revises: 0001_catalog_baseline
 Create Date: 2026-08-01
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op

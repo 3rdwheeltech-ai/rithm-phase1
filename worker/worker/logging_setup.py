@@ -8,6 +8,7 @@ Note the absence of structlog.stdlib.add_logger_name: it reads logger.name,
 which PrintLogger does not have. Adding it crashes on the first log call — the
 same deviation recorded for the API in docs/InitialSetup/specDeviations.md.
 """
+
 import logging
 
 import structlog

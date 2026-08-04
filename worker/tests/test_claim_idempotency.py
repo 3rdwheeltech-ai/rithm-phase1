@@ -6,6 +6,7 @@ already RUNNING or COMPLETED matches zero rows. Getting False back must be an
 ordinary, quiet outcome — never an exception — because it is the *expected*
 result whenever SQS does what SQS is allowed to do and delivers twice.
 """
+
 from types import TracebackType
 from typing import Any
 
@@ -87,9 +88,9 @@ def test_claim_is_guarded_on_queued_and_bumps_attempt(
 
     sql, params = engine.conn.executed[0]
     assert "UPDATE generation.jobs" in sql
-    assert "status = 'QUEUED'" in sql          # the idempotency guard
+    assert "status = 'QUEUED'" in sql  # the idempotency guard
     assert "status     = 'RUNNING'" in sql
-    assert "attempt    = attempt + 1" in sql   # drives the DEAD_LETTERED count
+    assert "attempt    = attempt + 1" in sql  # drives the DEAD_LETTERED count
     assert "RETURNING id" in sql
     assert params == {"job_id": _JOB, "worker_id": _WORKER}
 

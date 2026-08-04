@@ -147,7 +147,7 @@ async def _engine_session(dsn: str) -> AsyncGenerator[AsyncSession, None]:
 @pytest_asyncio.fixture
 async def live_session() -> AsyncGenerator[AsyncSession, None]:
     """A session as the *generation* role — the one under test."""
-    assert LIVE_DB_DSN is not None      # guarded by requires_live_db
+    assert LIVE_DB_DSN is not None  # guarded by requires_live_db
     async with _engine_session(LIVE_DB_DSN) as session:
         yield session
 
@@ -182,7 +182,7 @@ async def live_generation_engine() -> AsyncGenerator[None, None]:
     previous = os.environ.get("DB_GENERATION_DSN")
     os.environ["DB_GENERATION_DSN"] = LIVE_DB_DSN
     get_settings.cache_clear()
-    init_db_engines()   # other modules' engines are created but never connected
+    init_db_engines()  # other modules' engines are created but never connected
     try:
         yield
     finally:

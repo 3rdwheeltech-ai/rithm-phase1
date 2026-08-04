@@ -13,6 +13,7 @@ so plain boto3 is the whole story.
 Client construction is lazy so importing worker.main never reaches out to AWS,
 and so tests can patch settings (or these factories) before the first call.
 """
+
 # boto3/botocore ship no py.typed, so every call is Unknown to pyright strict.
 # Containing the suppression to this one file is the whole point of the module;
 # the callers below all consume concretely typed wrappers.

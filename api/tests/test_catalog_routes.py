@@ -9,6 +9,7 @@ Two layers, because two different things can break:
                                       CAST wrappers that stop asyncpg failing
                                       on the first page.
 """
+
 import base64
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -70,6 +71,7 @@ def _prompt(kind: str = "initial", delta: str | None = None) -> PromptRow:
 @pytest.fixture(autouse=True)
 def no_real_presign(monkeypatch: pytest.MonkeyPatch) -> None:
     """Presigning is a local signing op, but it still wants credentials."""
+
     def _fake_presign(key: str, expires: int = 900) -> str:
         return f"https://s3.test/{key}?X-Amz-Expires={expires}"
 
@@ -108,6 +110,7 @@ async def test_list_returns_summaries_with_playback_urls(
     mp3_url is on the LIST, not just the detail. Day 4 feeds Recents from here
     and the Player from mp3_url; without it every click costs a round-trip.
     """
+
     async def _list(**_kwargs: Any) -> tuple[list[TrackRow], bool, int]:
         return [_track(0), _track(1)], False, 2
 
@@ -184,6 +187,7 @@ async def test_malformed_cursor_is_400(
     400, not a 500 and NOT a silent reset to page 1 — a silent reset leaves the
     client looping over page 1 believing it is paging forward.
     """
+
     async def _list(**_kwargs: Any) -> tuple[list[TrackRow], bool, int]:
         raise AssertionError("service must not be reached on a bad cursor")
 
@@ -390,9 +394,7 @@ async def test_get_track_scopes_ownership_in_the_where_clause(
     """Ownership in the WHERE means a miss is a clean 404 with no branch to fumble."""
     sessions = _patch_session(monkeypatch, [[]])
 
-    assert await catalog_service.get_track(
-        track_id=uuid4(), user_id=USER_ID
-    ) is None
+    assert await catalog_service.get_track(track_id=uuid4(), user_id=USER_ID) is None
 
     statement, _ = sessions[0].executed[0]
     assert "user_id = CAST(:user_id AS uuid)" in statement
@@ -405,9 +407,10 @@ async def test_soft_delete_folds_ownership_and_idempotency_into_one_statement(
 ) -> None:
     sessions = _patch_session(monkeypatch, [[(uuid4(),)]])
 
-    assert await catalog_service.soft_delete_track(
-        track_id=uuid4(), user_id=USER_ID
-    ) is True
+    assert (
+        await catalog_service.soft_delete_track(track_id=uuid4(), user_id=USER_ID)
+        is True
+    )
 
     statement, _ = sessions[0].executed[0]
     assert "SET deleted_at = now()" in statement

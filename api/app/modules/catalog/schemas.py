@@ -5,6 +5,7 @@ Catalog wire DTOs.
 a field that is structurally always null is a small lie the Day-4 client would
 have to model and then unmodel. Add it when the feedback endpoint ships.
 """
+
 from datetime import datetime
 from typing import Literal
 from uuid import UUID

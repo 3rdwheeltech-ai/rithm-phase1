@@ -11,6 +11,7 @@ SELECT (ops/db/00_init.sql). Day 3 adds no grant and no migration. If you find
 yourself writing one, you are on the generation connection by mistake — that
 role has only column-scoped SELECT (id, source_job_id) and will refuse.
 """
+
 import base64
 import binascii
 from datetime import datetime
@@ -57,9 +58,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
         timestamp, _, track_id = raw.partition("|")
         return datetime.fromisoformat(timestamp), UUID(track_id)
     except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Malformed cursor."
-        ) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed cursor.") from exc
 
 
 def _summary(track: TrackRow) -> TrackSummary:
@@ -153,9 +152,7 @@ async def get_track(
     )
 
 
-@router.get(
-    "/tracks/{track_id}/prompts", response_model=list[PromptHistoryEntry]
-)
+@router.get("/tracks/{track_id}/prompts", response_model=list[PromptHistoryEntry])
 async def get_track_prompts(
     track_id: UUID,
     user_id: UUID = Depends(require_user),

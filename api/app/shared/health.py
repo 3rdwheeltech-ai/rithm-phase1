@@ -7,6 +7,7 @@ Liveness and diagnostic health endpoints.
 /health/deep — manual diagnostic. Pings one session per module. Never wire
                this to a healthcheck.
 """
+
 import structlog
 from fastapi import APIRouter, Response
 from sqlalchemy import text
@@ -44,9 +45,7 @@ async def health_deep(response: Response) -> dict[str, object]:
         except Exception as exc:  # noqa: BLE001 — diagnostic: report, never raise
             results[module] = "error"
             ok = False
-            logger.warning(
-                "health_deep_module_failed", module=module, error=str(exc)
-            )
+            logger.warning("health_deep_module_failed", module=module, error=str(exc))
 
     if not ok:
         response.status_code = 503

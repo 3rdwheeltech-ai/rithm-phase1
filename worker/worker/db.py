@@ -16,6 +16,7 @@ Crash semantics fall out of (1) and are both correct: a crash after the commit
 leaves the row RUNNING for the Day-3 sweeper to fail; a crash before it leaves
 the row QUEUED and SQS redelivers.
 """
+
 import structlog
 from sqlalchemy import Engine, create_engine, text
 

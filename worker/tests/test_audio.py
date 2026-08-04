@@ -11,6 +11,7 @@ likely to be wrong; what is worth checking is that ffmpeg *accepts* that argv
 and emits a file the next stage can read. The worker image always has ffmpeg,
 so these run for real there and in CI.
 """
+
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -62,7 +63,7 @@ def test_encode_mp3_produces_a_playable_mp3(normalized: Path) -> None:
 
 def test_waveform_sha256_is_64_char_lowercase_hex(normalized: Path) -> None:
     digest = audio.waveform_sha256(normalized)
-    assert len(digest) == 64          # fits catalog.tracks.waveform_hash CHAR(64)
+    assert len(digest) == 64  # fits catalog.tracks.waveform_hash CHAR(64)
     assert digest == digest.lower()
     assert all(c in "0123456789abcdef" for c in digest)
 

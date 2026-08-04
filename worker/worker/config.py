@@ -8,6 +8,7 @@ a psycopg2 DSN (`postgresql://...`), because the worker is synchronous. The
 API's DSNs are `+asyncpg`. Crossing them fails at connect time with a driver
 error that reads like a network problem.
 """
+
 from functools import lru_cache
 
 from pydantic import SecretStr
@@ -16,7 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=None,   # container env only; no .env baked into the image
+        env_file=None,  # container env only; no .env baked into the image
         extra="ignore",
         case_sensitive=False,
     )

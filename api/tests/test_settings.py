@@ -5,21 +5,25 @@ Both are the kind of thing that fails silently: a TTL that ignores its env var
 produces a spinner nobody can reproduce locally, and a CORS list that ignores
 its env var produces "works in curl, blocked in the browser".
 """
+
+from typing import Any
+
 import pytest
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
 
 
-def _cors_options(app: object) -> dict[str, object]:
+def _cors_options(app: FastAPI) -> dict[str, Any]:
     """The kwargs CORSMiddleware was actually constructed with."""
-    for middleware in app.user_middleware:  # type: ignore[attr-defined]
+    for middleware in app.user_middleware:
         if middleware.cls is CORSMiddleware:
             return dict(middleware.kwargs)
     raise AssertionError("CORSMiddleware is not installed")
 
 
-def _build_app() -> object:
+def _build_app() -> FastAPI:
     from app.main import create_app
 
     return create_app()

@@ -9,6 +9,7 @@ Revises:
 Create Date: 2026-07-14
 
 """
+
 from collections.abc import Sequence
 
 from alembic import op

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 def setup_cors(app: FastAPI) -> None:
     from app.config import get_settings
+
     settings = get_settings()
 
     # Origins come from the environment, not from a branch on `environment`.

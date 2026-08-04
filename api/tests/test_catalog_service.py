@@ -10,6 +10,7 @@ vocabulary is deliberately different from generation.jobs'.
 The transaction itself, the cross-schema grant, and the unique index are proven
 against real Postgres in test_catalog_live.py.
 """
+
 import json
 from uuid import UUID
 
@@ -51,9 +52,7 @@ def _inserting_session() -> FakeSession:
     return FakeSession([[FakeRow("01920000-0000-7000-8000-00000000face")]])
 
 
-async def _create(
-    session: FakeSession, *, kind: str = "generate"
-) -> dict[str, object]:
+async def _create(session: FakeSession, *, kind: str = "generate") -> dict[str, object]:
     return await CatalogService().create_track_in_txn(
         session,  # type: ignore[arg-type]
         user_id=_USER,
@@ -119,7 +118,7 @@ async def test_conflict_adopts_the_existing_track_and_skips_the_prompt() -> None
     created = await _create(session)
 
     assert str(created["track_id"]) == existing_id
-    assert len(session.executed) == 2                      # no prompt insert
+    assert len(session.executed) == 2  # no prompt insert
     assert "INSERT INTO catalog.prompt_history" not in str(session.executed)
     assert "SELECT id FROM catalog.tracks" in session.executed[1][0]
 
@@ -177,7 +176,7 @@ async def test_missing_optional_params_do_not_break_the_insert() -> None:
     assert params["genre"] is None
     assert params["mood"] is None
     assert params["bpm"] is None
-    assert params["vocal"] is True      # column default, mirrored here
+    assert params["vocal"] is True  # column default, mirrored here
     assert params["length_seconds"] == 30
 
 
@@ -194,7 +193,7 @@ async def test_returns_the_track_id_finalize_job_puts_on_the_sse_event() -> None
 @pytest.mark.parametrize(
     ("job_kind", "expected"),
     [
-        ("generate", "initial"),        # the names differ on purpose
+        ("generate", "initial"),  # the names differ on purpose
         ("variation", "variation"),
         ("refine_fresh", "refine_fresh"),
         ("refine_audio", "refine_audio"),
@@ -227,10 +226,22 @@ def test_prompt_kind_map_only_emits_values_the_check_allows() -> None:
 def test_enum_lists_match_the_launch_plan() -> None:
     """These are the UI dropdown vocabularies (launch plan §A6)."""
     assert GENRES == (
-        "Pop", "Hip-Hop", "EDM", "Lo-Fi", "Cinematic",
-        "Rock", "Country", "R&B", "Ambient",
+        "Pop",
+        "Hip-Hop",
+        "EDM",
+        "Lo-Fi",
+        "Cinematic",
+        "Rock",
+        "Country",
+        "R&B",
+        "Ambient",
     )
     assert MOODS == (
-        "Happy", "Calm", "Energetic", "Dark",
-        "Romantic", "Inspirational", "Dramatic",
+        "Happy",
+        "Calm",
+        "Energetic",
+        "Dark",
+        "Romantic",
+        "Inspirational",
+        "Dramatic",
     )

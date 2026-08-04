@@ -8,6 +8,7 @@ variation's seed differs from its parent's, and that an ownership miss enqueues
 nothing. A real database proves none of that better, and Gate C already proves
 the SQL runs.
 """
+
 import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -113,9 +114,7 @@ def rate_limited(monkeypatch: pytest.MonkeyPatch) -> list[FakeSession]:
     async def _session(_module: str) -> AsyncIterator[FakeSession]:
         # First result: the INSERT returns nothing (limit reached). Then the
         # count query, then the oldest-created_at query.
-        session = FakeSession(
-            results=[[], [(20,)], [_Row(datetime.now(UTC))]]
-        )
+        session = FakeSession(results=[[], [(20,)], [_Row(datetime.now(UTC))]])
         opened.append(session)
         yield session
 
@@ -127,15 +126,11 @@ def rate_limited(monkeypatch: pytest.MonkeyPatch) -> list[FakeSession]:
 def sqs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     sent: list[dict[str, Any]] = []
 
-    async def _capture(
-        *, queue_url: str, body: str, attributes: Any = None
-    ) -> str:
+    async def _capture(*, queue_url: str, body: str, attributes: Any = None) -> str:
         sent.append({"queue_url": queue_url, "body": body, "attrs": attributes})
         return "msg-1"
 
-    monkeypatch.setattr(
-        generation_service_module, "send_sqs_message", _capture
-    )
+    monkeypatch.setattr(generation_service_module, "send_sqs_message", _capture)
     return sent
 
 
@@ -316,12 +311,11 @@ async def test_enqueue_failure_fails_the_job_and_returns_503(
     will ever pick up. It must be failed immediately rather than left for the
     sweeper's 30 minutes.
     """
+
     async def _boom(**_kwargs: Any) -> str:
         raise RuntimeError("sqs is down")
 
-    monkeypatch.setattr(
-        generation_service_module, "send_sqs_message", _boom
-    )
+    monkeypatch.setattr(generation_service_module, "send_sqs_message", _boom)
 
     response = await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
 
@@ -339,9 +333,7 @@ async def test_variation_copies_parent_params_with_a_new_seed(
 ) -> None:
     generation_service.track_reader = FakeTrackReader(_parent())
 
-    response = await client.post(
-        f"/api/v1/tracks/{PARENT_TRACK_ID}/variation"
-    )
+    response = await client.post(f"/api/v1/tracks/{PARENT_TRACK_ID}/variation")
 
     assert response.status_code == 202
     envelope = _envelope(sqs)
@@ -367,9 +359,7 @@ async def test_variation_on_a_foreign_track_is_404_and_enqueues_nothing(
     """404, never 403 — a 403 tells an attacker the track exists."""
     generation_service.track_reader = FakeTrackReader(_parent(OTHER_USER_ID))
 
-    response = await client.post(
-        f"/api/v1/tracks/{PARENT_TRACK_ID}/variation"
-    )
+    response = await client.post(f"/api/v1/tracks/{PARENT_TRACK_ID}/variation")
 
     assert response.status_code == 404
     assert sqs == []
@@ -409,9 +399,7 @@ async def test_refine_composes_the_prompt(
     assert envelope["parent_track_id"] == str(PARENT_TRACK_ID)
 
     params = envelope["params"]
-    assert params["prompt"] == (
-        "warm lo-fi piano loop. make it darker and slower"
-    )
+    assert params["prompt"] == ("warm lo-fi piano loop. make it darker and slower")
     # Carried in the payload so finalize_job can write prompt_history
     # .delta_command without a second query.
     assert params["delta_command"] == "make it darker and slower"

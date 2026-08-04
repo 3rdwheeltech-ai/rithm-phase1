@@ -14,6 +14,7 @@ never abandoned mid-upload:
                Phase 1 (on-demand + Fargate); it becomes load-bearing the day
                capacity flips to Spot, which is a config change, not a code one.
 """
+
 import signal
 import sys
 import threading
@@ -37,9 +38,7 @@ _shutdown = threading.Event()
 # IMDSv2 only — AL2023 disables v1. On Fargate there is no IMDS at all, so the
 # token PUT times out and the watcher does nothing for the life of the task.
 _IMDS_TOKEN_URL = "http://169.254.169.254/latest/api/token"  # noqa: S104
-_IMDS_SPOT_URL = (
-    "http://169.254.169.254/latest/meta-data/spot/instance-action"
-)
+_IMDS_SPOT_URL = "http://169.254.169.254/latest/meta-data/spot/instance-action"
 _IMDS_TIMEOUT_SECONDS = 1.0
 _SPOT_POLL_SECONDS = 5
 
@@ -111,7 +110,7 @@ def main() -> None:
     start_spot_watcher()
 
     worker_id = resolve_worker_id()
-    model = load_acestep_model()   # None in stub
+    model = load_acestep_model()  # None in stub
     logger.info(
         "worker_started",
         worker_id=worker_id,
@@ -122,7 +121,7 @@ def main() -> None:
     idle_since = time.monotonic()
 
     while not _shutdown.is_set():
-        message = messaging.receive_one()   # 20s long-poll
+        message = messaging.receive_one()  # 20s long-poll
 
         if message is None:
             idle_limit = settings.worker_idle_exit_seconds

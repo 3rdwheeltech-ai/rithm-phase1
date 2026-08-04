@@ -18,6 +18,7 @@ The message is deleted only AFTER the SNS publish succeeds. Deleting first would
 turn an SNS outage into a silently lost job with no row to sweep and no message
 to redeliver.
 """
+
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -93,9 +94,7 @@ def process_job(msg: dict[str, Any], model: Any, worker_id: str) -> None:
         raw = run_inference(model, job)
         normalized = audio.loudnorm(raw)
         mp3 = audio.encode_mp3(normalized)
-        wav_key, mp3_key = storage.upload_track_assets(
-            user_id, job_id, normalized, mp3
-        )
+        wav_key, mp3_key = storage.upload_track_assets(user_id, job_id, normalized, mp3)
         _publish_completed(
             job,
             wav_key=wav_key,

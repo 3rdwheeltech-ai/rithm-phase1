@@ -6,6 +6,7 @@ Long-poll and visibility are set at receive time as well as on the queue
 maxReceiveCount=3). Belt and braces on purpose: the queue attributes are
 infrastructure that can drift, these are code that ships with the consumer.
 """
+
 from typing import Any
 
 import structlog

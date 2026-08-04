@@ -10,6 +10,7 @@ what could go wrong here is sweeping the wrong column, publishing before the
 commit, or a bad tick taking the event loop down with it, and none of those need
 a real database to catch.
 """
+
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -151,9 +152,7 @@ async def test_a_failing_tick_does_not_kill_the_loop(
 
     monkeypatch.setenv("SWEEPER_INTERVAL_SECONDS", "0")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        generation_service_module, "_SWEEPER_TICK_SECONDS", 0.001
-    )
+    monkeypatch.setattr(generation_service_module, "_SWEEPER_TICK_SECONDS", 0.001)
 
     calls = 0
 
@@ -189,9 +188,7 @@ async def test_the_loop_stops_promptly_on_cancellation(
     The short tick exists for exactly this: lifespan cancels the task on
     shutdown and awaits it, and a 300-second sleep would hold the process open.
     """
-    monkeypatch.setattr(
-        generation_service_module, "_SWEEPER_TICK_SECONDS", 0.001
-    )
+    monkeypatch.setattr(generation_service_module, "_SWEEPER_TICK_SECONDS", 0.001)
     _patch_session(monkeypatch, [[], []])
 
     service = GenerationService()

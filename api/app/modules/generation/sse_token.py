@@ -5,6 +5,7 @@ EventSource cannot send an Authorization header, so the stream URL carries a
 short-lived signed token instead. No JWT library needed — this is one claim set
 and one signature.
 """
+
 import base64
 import hashlib
 import hmac
@@ -37,9 +38,7 @@ def _unb64(encoded: str) -> bytes:
 
 
 def _sign(body: str, key: str) -> str:
-    return _b64(
-        hmac.new(key.encode(), body.encode(), hashlib.sha256).digest()
-    )
+    return _b64(hmac.new(key.encode(), body.encode(), hashlib.sha256).digest())
 
 
 def mint(user_id: str, job_id: str, key: str, ttl_seconds: int) -> str:

@@ -6,6 +6,7 @@ that matter most are the negative ones: a retryable failure must NOT delete the
 message and must NOT publish, because publishing FAILED would resolve the user's
 stream on a job that is about to succeed on redelivery.
 """
+
 from pathlib import Path
 from typing import Any
 
@@ -108,8 +109,8 @@ def test_already_claimed_deletes_and_stays_silent(
     process_job(make_message(), None, _WORKER)
 
     assert fake_aws["sqs"].deleted == ["rh-1"]
-    assert fake_aws["sns"].published == []      # nothing to tell the user
-    assert fake_aws["s3"].uploads == []         # no GPU spend, no upload
+    assert fake_aws["sns"].published == []  # nothing to tell the user
+    assert fake_aws["s3"].uploads == []  # no GPU spend, no upload
 
 
 @pytest.mark.usefixtures("claimed", "stub_pipeline")
@@ -185,9 +186,7 @@ def test_claim_error_is_retryable(
 
 
 def test_unparseable_body_is_dropped(fake_aws: dict[str, Any]) -> None:
-    process_job(
-        {"Body": "not json at all", "ReceiptHandle": "rh-9"}, None, _WORKER
-    )
+    process_job({"Body": "not json at all", "ReceiptHandle": "rh-9"}, None, _WORKER)
     # No job_id to report against, so there is nothing to publish — but it must
     # not cycle to the DLQ either.
     assert fake_aws["sqs"].deleted == ["rh-9"]

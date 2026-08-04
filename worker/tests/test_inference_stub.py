@@ -7,6 +7,7 @@ it. The test stays as a TRIPWIRE: if someone later adds an in-process model
 path, this fails and forces them to revisit the image, the task definition and
 the GPU reservation together rather than one at a time.
 """
+
 import sys
 from pathlib import Path
 

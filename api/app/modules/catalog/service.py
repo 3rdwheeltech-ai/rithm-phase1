@@ -15,6 +15,7 @@ Role note: the session authenticates as rithm_generation, which by default has
 no rights in the catalog schema. Migration 0002_catalog_generation_grants adds
 exactly USAGE + INSERT on these two tables — no SELECT, no other tables.
 """
+
 import json
 from datetime import datetime
 from typing import Any, cast
@@ -44,7 +45,6 @@ logger = structlog.get_logger()
 
 
 class CatalogService:
-
     async def create_track_in_txn(
         self,
         session: AsyncSession,
@@ -186,17 +186,21 @@ class CatalogService:
         """
         async with get_session("catalog") as session:
             row = (
-                await session.execute(
-                    text(
-                        f"SELECT {PARENT_TRACK_COLUMNS} "  # noqa: S608
-                        f"FROM {TRACKS_TABLE} "
-                        "WHERE id = CAST(:id AS uuid) "
-                        "  AND user_id = CAST(:user_id AS uuid) "
-                        "  AND deleted_at IS NULL"
-                    ),
-                    {"id": str(track_id), "user_id": str(user_id)},
+                (
+                    await session.execute(
+                        text(
+                            f"SELECT {PARENT_TRACK_COLUMNS} "  # noqa: S608
+                            f"FROM {TRACKS_TABLE} "
+                            "WHERE id = CAST(:id AS uuid) "
+                            "  AND user_id = CAST(:user_id AS uuid) "
+                            "  AND deleted_at IS NULL"
+                        ),
+                        {"id": str(track_id), "user_id": str(user_id)},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
 
         if row is None:
             return None
@@ -244,9 +248,10 @@ class CatalogService:
 
         async with get_session("catalog") as session:
             rows = (
-                await session.execute(
-                    text(
-                        f"""
+                (
+                    await session.execute(
+                        text(
+                            f"""
                         SELECT {TRACK_COLUMNS}
                           FROM {TRACKS_TABLE}
                          WHERE user_id = CAST(:user_id AS uuid)
@@ -258,15 +263,18 @@ class CatalogService:
                          ORDER BY created_at DESC, id DESC
                          LIMIT :limit_plus_one
                         """  # noqa: S608 — constants, not input
-                    ),
-                    {
-                        "user_id": str(user_id),
-                        "cursor_ts": cursor_ts,
-                        "cursor_id": cursor_id,
-                        "limit_plus_one": limit + 1,
-                    },
+                        ),
+                        {
+                            "user_id": str(user_id),
+                            "cursor_ts": cursor_ts,
+                            "cursor_id": cursor_id,
+                            "limit_plus_one": limit + 1,
+                        },
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
 
             total = (
                 await session.execute(
@@ -283,9 +291,7 @@ class CatalogService:
         tracks = [TrackRow.from_row(row) for row in rows[:limit]]
         return tracks, has_more, int(total)
 
-    async def get_track(
-        self, *, track_id: UUID, user_id: UUID
-    ) -> TrackRow | None:
+    async def get_track(self, *, track_id: UUID, user_id: UUID) -> TrackRow | None:
         """
         One track, or None when it does not exist, is deleted, or is not theirs.
 
@@ -294,17 +300,21 @@ class CatalogService:
         """
         async with get_session("catalog") as session:
             row = (
-                await session.execute(
-                    text(
-                        f"SELECT {TRACK_COLUMNS} "  # noqa: S608
-                        f"FROM {TRACKS_TABLE} "
-                        "WHERE id = CAST(:id AS uuid) "
-                        "  AND user_id = CAST(:user_id AS uuid) "
-                        "  AND deleted_at IS NULL"
-                    ),
-                    {"id": str(track_id), "user_id": str(user_id)},
+                (
+                    await session.execute(
+                        text(
+                            f"SELECT {TRACK_COLUMNS} "  # noqa: S608
+                            f"FROM {TRACKS_TABLE} "
+                            "WHERE id = CAST(:id AS uuid) "
+                            "  AND user_id = CAST(:user_id AS uuid) "
+                            "  AND deleted_at IS NULL"
+                        ),
+                        {"id": str(track_id), "user_id": str(user_id)},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return TrackRow.from_row(row) if row else None
 
     async def get_prompt_history(self, *, track_id: UUID) -> list[PromptRow]:
@@ -318,21 +328,23 @@ class CatalogService:
         """
         async with get_session("catalog") as session:
             rows = (
-                await session.execute(
-                    text(
-                        f"SELECT {PROMPT_HISTORY_COLUMNS} "  # noqa: S608
-                        f"FROM {PROMPT_HISTORY_TABLE} "
-                        "WHERE track_id = CAST(:track_id AS uuid) "
-                        "ORDER BY created_at ASC"
-                    ),
-                    {"track_id": str(track_id)},
+                (
+                    await session.execute(
+                        text(
+                            f"SELECT {PROMPT_HISTORY_COLUMNS} "  # noqa: S608
+                            f"FROM {PROMPT_HISTORY_TABLE} "
+                            "WHERE track_id = CAST(:track_id AS uuid) "
+                            "ORDER BY created_at ASC"
+                        ),
+                        {"track_id": str(track_id)},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [PromptRow.from_row(row) for row in rows]
 
-    async def soft_delete_track(
-        self, *, track_id: UUID, user_id: UUID
-    ) -> bool:
+    async def soft_delete_track(self, *, track_id: UUID, user_id: UUID) -> bool:
         """
         Mark a track deleted. True if this call did it, False if there was
         nothing to delete.

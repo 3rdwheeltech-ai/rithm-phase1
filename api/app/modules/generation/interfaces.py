@@ -18,6 +18,7 @@ narrowness is the point — generation cannot read users' track content. So the
 parent lookup runs on the CATALOG connection as rithm_catalog, before the job
 transaction opens, and reaches generation through this Protocol.
 """
+
 from datetime import datetime
 from typing import Any, Protocol, TypedDict
 from uuid import UUID
@@ -104,8 +105,7 @@ class TrackReader(Protocol):
 
     async def get_track_for_generation(
         self, *, track_id: UUID, user_id: UUID
-    ) -> ParentTrack | None:
-        ...
+    ) -> ParentTrack | None: ...
 
 
 class GenerationService(Protocol):
@@ -117,8 +117,7 @@ class GenerationService(Protocol):
         params: GenerationParams,
         parent_track_id: UUID | None = None,
         rate_limit: int | None = None,
-    ) -> tuple[UUID, datetime]:
-        ...
+    ) -> tuple[UUID, datetime]: ...
 
     async def finalize_job(
         self,

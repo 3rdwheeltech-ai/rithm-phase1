@@ -9,6 +9,7 @@ nothing.
 Signature verification itself is monkeypatched here; it is exercised for real
 by the cert chain, which needs AWS.
 """
+
 import json
 from typing import Any
 
@@ -37,9 +38,7 @@ def finalize_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     async def _record(**kwargs: Any) -> None:
         calls.append(kwargs)
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "finalize_job", _record
-    )
+    monkeypatch.setattr(generation_api.generation_service, "finalize_job", _record)
     return calls
 
 
@@ -142,9 +141,7 @@ async def test_unknown_job_id_still_returns_200(
     async def _raise(**_kwargs: Any) -> None:
         raise RuntimeError("no such job")
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "finalize_job", _raise
-    )
+    monkeypatch.setattr(generation_api.generation_service, "finalize_job", _raise)
     message = {"job_id": _JOB, "status": "COMPLETED"}
     response = await async_client.post(
         _PATH, json={"Type": "Notification", "Message": json.dumps(message)}
@@ -169,7 +166,5 @@ async def test_malformed_message_still_returns_200(
 async def test_unknown_type_returns_200(
     async_client: AsyncClient, signature_ok: None
 ) -> None:
-    response = await async_client.post(
-        _PATH, json={"Type": "UnsubscribeConfirmation"}
-    )
+    response = await async_client.post(_PATH, json={"Type": "UnsubscribeConfirmation"})
     assert response.status_code == 200

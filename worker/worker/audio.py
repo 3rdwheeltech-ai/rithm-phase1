@@ -10,6 +10,7 @@ exit surfaces as CalledProcessError. The processor classifies that as a
 permanent failure: ffmpeg failing on input it already accepted is a bug or a
 corrupt artifact, and retrying it just burns receives until the DLQ.
 """
+
 import hashlib
 import os
 import subprocess
@@ -46,7 +47,7 @@ def _run(args: list[str]) -> str:
 def _temp_path(suffix: str) -> Path:
     """Reserve a unique temp filename for ffmpeg to write into."""
     handle, name = tempfile.mkstemp(suffix=suffix)
-    os.close(handle)   # ffmpeg opens the path itself; -y overwrites the stub
+    os.close(handle)  # ffmpeg opens the path itself; -y overwrites the stub
     return Path(name)
 
 
@@ -63,11 +64,18 @@ def loudnorm(src: Path) -> Path:
     dst = _temp_path(".wav")
     _run(
         [
-            "ffmpeg", "-v", "error", "-y",
-            "-i", str(src),
-            "-af", _LOUDNORM_FILTER,
-            "-ar", _SAMPLE_RATE,
-            "-ac", _CHANNELS,
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            "-af",
+            _LOUDNORM_FILTER,
+            "-ar",
+            _SAMPLE_RATE,
+            "-ac",
+            _CHANNELS,
             str(dst),
         ]
     )
@@ -79,11 +87,18 @@ def encode_mp3(src: Path, bitrate: str = _MP3_BITRATE) -> Path:
     dst = _temp_path(".mp3")
     _run(
         [
-            "ffmpeg", "-v", "error", "-y",
-            "-i", str(src),
-            "-codec:a", "libmp3lame",
-            "-b:a", bitrate,
-            "-ar", _SAMPLE_RATE,
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            bitrate,
+            "-ar",
+            _SAMPLE_RATE,
             str(dst),
         ]
     )
@@ -94,9 +109,13 @@ def probe_duration_seconds(path: Path) -> int:
     """Duration in whole seconds, rounded."""
     out = _run(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
             str(path),
         ]
     )
@@ -113,11 +132,17 @@ def waveform_sha256(wav: Path) -> str:
     """
     result = subprocess.run(  # noqa: S603 — fixed argv, no shell
         [
-            "ffmpeg", "-v", "error",
-            "-i", str(wav),
-            "-f", "s16le",
-            "-ac", _CHANNELS,
-            "-ar", _SAMPLE_RATE,
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(wav),
+            "-f",
+            "s16le",
+            "-ac",
+            _CHANNELS,
+            "-ar",
+            _SAMPLE_RATE,
             "-",
         ],
         check=True,

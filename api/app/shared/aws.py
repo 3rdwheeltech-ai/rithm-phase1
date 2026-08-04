@@ -12,6 +12,7 @@ in lifespan — and the test suite's async_client fixture never runs lifespan, s
 it would be invisible to most tests. One SendMessage per request makes the
 threadpool hop irrelevant.
 """
+
 # boto3/botocore ship no py.typed, so every call is Unknown to pyright strict.
 # Containing the suppression to this one file is the whole point of the module;
 # the public functions below have fully concrete signatures, so nothing leaks.

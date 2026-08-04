@@ -9,6 +9,7 @@ like.
 
 Ref: https://docs.aws.amazon.com/sns/latest/dg/SendMessageToHttp.verify.signature.html
 """
+
 import base64
 import re
 from typing import Any
@@ -35,10 +36,20 @@ _cert_cache: dict[str, bytes] = {}
 
 # Field order and presence differ by message Type (per the SNS spec).
 _NOTIFICATION_FIELDS = (
-    "Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type",
+    "Message",
+    "MessageId",
+    "Subject",
+    "Timestamp",
+    "TopicArn",
+    "Type",
 )
 _CONFIRMATION_FIELDS = (
-    "Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn",
+    "Message",
+    "MessageId",
+    "SubscribeURL",
+    "Timestamp",
+    "Token",
+    "TopicArn",
     "Type",
 )
 
@@ -60,9 +71,7 @@ def _build_message_to_sign(payload: dict[str, Any]) -> bytes:
     """Reconstruct the canonical string SNS signed."""
     msg_type = payload.get("Type", "")
     fields = (
-        _NOTIFICATION_FIELDS
-        if msg_type == "Notification"
-        else _CONFIRMATION_FIELDS
+        _NOTIFICATION_FIELDS if msg_type == "Notification" else _CONFIRMATION_FIELDS
     )
     parts: list[str] = []
     for field in fields:
@@ -80,9 +89,7 @@ def _hash_for(signature_version: str) -> HashAlgorithm:
         return hashes.SHA256()
     if signature_version == "1":
         return hashes.SHA1()
-    raise SNSVerificationError(
-        f"Unsupported SignatureVersion: {signature_version!r}"
-    )
+    raise SNSVerificationError(f"Unsupported SignatureVersion: {signature_version!r}")
 
 
 async def verify_sns_signature(payload: dict[str, Any]) -> None:

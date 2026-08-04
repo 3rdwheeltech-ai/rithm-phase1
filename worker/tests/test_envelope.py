@@ -6,6 +6,7 @@ rename here is a silent break: the handler would 200 and the job would sit at
 RUNNING until the sweeper failed it. These tests pin the exact key set against
 the pure builders, then check once that publishing targets the right topic.
 """
+
 import json
 from datetime import datetime
 from typing import Any
@@ -32,13 +33,20 @@ def test_completed_envelope_has_exactly_the_documented_keys() -> None:
     )
 
     assert set(payload) == {
-        "schema_version", "job_id", "status", "s3_wav_key", "s3_mp3_key",
-        "duration_seconds", "waveform_hash", "worker_id", "completed_at",
+        "schema_version",
+        "job_id",
+        "status",
+        "s3_wav_key",
+        "s3_mp3_key",
+        "duration_seconds",
+        "waveform_hash",
+        "worker_id",
+        "completed_at",
     }
     assert payload["schema_version"] == 1
     assert payload["status"] == "COMPLETED"
     assert payload["job_id"] == "01920000-0000-7000-8000-0000000000aa"
-    assert len(payload["waveform_hash"]) == 64   # CHAR(64) in catalog.tracks
+    assert len(payload["waveform_hash"]) == 64  # CHAR(64) in catalog.tracks
     # ISO-8601 with an offset, so the API parses it without guessing a zone.
     assert datetime.fromisoformat(payload["completed_at"]).tzinfo is not None
 
@@ -49,8 +57,13 @@ def test_failed_envelope_has_exactly_the_documented_keys() -> None:
     )
 
     assert set(payload) == {
-        "schema_version", "job_id", "status", "error", "error_class",
-        "worker_id", "failed_at",
+        "schema_version",
+        "job_id",
+        "status",
+        "error",
+        "error_class",
+        "worker_id",
+        "failed_at",
     }
     assert payload["schema_version"] == 1
     assert payload["status"] == "FAILED"

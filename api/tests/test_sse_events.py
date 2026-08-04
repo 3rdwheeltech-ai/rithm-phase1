@@ -7,6 +7,7 @@ whole body before building the Response. So streams that *terminate* are tested
 through the client, and streams that *don't* are tested by driving the
 generator directly.
 """
+
 import asyncio
 from typing import Any
 
@@ -130,9 +131,7 @@ async def test_terminal_state_replays_and_closes(
     async def fake_load(_job_id: str) -> SSEEvent:
         return completed
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "load_job_event", fake_load
-    )
+    monkeypatch.setattr(generation_api.generation_service, "load_job_event", fake_load)
 
     response = await async_client.get(
         f"/api/v1/jobs/{_JOB}/events", params={"token": _token()}
@@ -159,15 +158,13 @@ async def test_stream_heartbeats_then_closes_on_terminal_event(
     async def fake_load(_job_id: str) -> SSEEvent:
         return {"event": "queued", "data": {"job_id": _JOB}}
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "load_job_event", fake_load
-    )
+    monkeypatch.setattr(generation_api.generation_service, "load_job_event", fake_load)
 
     stream = generation_api._event_stream(hub, _JOB)
     assert await stream.__anext__() == (
         f'event: queued\ndata: {{"job_id": "{_JOB}"}}\n\n'
     )
-    assert await stream.__anext__() == 'event: keepalive\ndata: {}\n\n'
+    assert await stream.__anext__() == "event: keepalive\ndata: {}\n\n"
 
     failed: SSEEvent = {
         "event": "failed",
@@ -202,9 +199,7 @@ async def test_stream_subscribes_before_reading_state(
         await asyncio.sleep(0)
         return None
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "load_job_event", slow_load
-    )
+    monkeypatch.setattr(generation_api.generation_service, "load_job_event", slow_load)
 
     stream = generation_api._event_stream(hub, _JOB)
     assert (await stream.__anext__()).startswith("event: running\n")
@@ -221,12 +216,10 @@ async def test_stream_unsubscribes_when_closed_early(
     async def fake_load(_job_id: str) -> Any:
         return None
 
-    monkeypatch.setattr(
-        generation_api.generation_service, "load_job_event", fake_load
-    )
+    monkeypatch.setattr(generation_api.generation_service, "load_job_event", fake_load)
 
     stream = generation_api._event_stream(hub, _JOB)
-    assert await stream.__anext__() == 'event: keepalive\ndata: {}\n\n'
+    assert await stream.__anext__() == "event: keepalive\ndata: {}\n\n"
     assert hub.subscriber_count(_JOB) == 1
     await stream.aclose()
     assert hub.subscriber_count(_JOB) == 0

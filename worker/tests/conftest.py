@@ -7,6 +7,7 @@ to assert is *which* calls happen and in what order — particularly that a
 message is deleted only on the paths that should delete it — and a recording
 fake states that directly.
 """
+
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -65,7 +66,10 @@ class FakeSQS:
         self.deleted.append(ReceiptHandle)
 
     def change_message_visibility(
-        self, *, ReceiptHandle: str, **_kwargs: Any  # noqa: N803
+        self,
+        *,
+        ReceiptHandle: str,
+        **_kwargs: Any,  # noqa: N803
     ) -> None:
         self.released.append(ReceiptHandle)
 
@@ -75,9 +79,7 @@ class FakeS3:
         self.uploads: list[tuple[str, str, str]] = []
         self._fail_with = fail_with
 
-    def upload_file(
-        self, filename: str, bucket: str, key: str, **kwargs: Any
-    ) -> None:
+    def upload_file(self, filename: str, bucket: str, key: str, **kwargs: Any) -> None:
         if self._fail_with is not None:
             raise self._fail_with
         content_type = kwargs.get("ExtraArgs", {}).get("ContentType", "")
