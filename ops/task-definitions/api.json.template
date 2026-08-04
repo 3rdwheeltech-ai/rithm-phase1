@@ -1,3 +1,107 @@
 {
-  "_comment": "ECS task definition template for the API — content lands on Day 3+ (see docs/RITHM_Days1to5_CodeSpec.md)."
+  "_comment": [
+    "ECS task definition for rithm-api. Replace <ACCOUNT>, <SECRET_RDS_ARN>,",
+    "<SECRET_APP_ARN>, <SHA>, <JOBS_QUEUE_URL>, <TOPIC_ARN>, <ASSETS_BUCKET>",
+    "and <ESTIMATED_COLD_START_SECONDS> before registering.",
+    "",
+    "THREE THINGS THAT WILL BITE, in the order they will bite you:",
+    "",
+    "1. Every secret ARN needs the TRAILING '::'. The syntax is",
+    "   <arn>:<json-key>:<version-stage>:<version-id>; omit the two empty",
+    "   trailing fields and ECS injects the entire JSON blob as the value.",
+    "",
+    "2. ASSETS_BUCKET is a bucket NAME, not an ARN. presign_get passes it",
+    "   straight to boto3's Bucket= parameter, so an 'arn:aws:s3:::...' value",
+    "   yields presigned URLs that do not resolve — and that surfaces at the",
+    "   'does the track actually play' gate, not at deploy time.",
+    "",
+    "3. SSE_TOKEN_SECRET, not SSE_SIGNING_KEY. Settings uses extra='ignore',",
+    "   so a misspelled name does not error — it silently falls back to the",
+    "   default that is published in this repo. main.py's lifespan refuses to",
+    "   boot in prod when that happens, so the symptom is a deployment that",
+    "   never stabilises rather than an obviously wrong value.",
+    "",
+    "desiredCount stays at 1: SSE pub/sub is in-process, and a second task",
+    "silently loses completion events for streams it does not own."
+  ],
+  "family": "rithm-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT>:role/rithm-api-task-role",
+  "containerDefinitions": [
+    {
+      "name": "api",
+      "image": "<ACCOUNT>.dkr.ecr.us-east-1.amazonaws.com/rithm/api:<SHA>",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
+      "environment": [
+        { "name": "ENVIRONMENT", "value": "prod" },
+        { "name": "DB_REQUIRE_SSL", "value": "true" },
+        { "name": "LOG_LEVEL", "value": "INFO" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "SQS_JOBS_QUEUE_URL", "value": "<JOBS_QUEUE_URL>" },
+        { "name": "SNS_COMPLETIONS_TOPIC_ARN", "value": "<TOPIC_ARN>" },
+        { "name": "ASSETS_BUCKET", "value": "<ASSETS_BUCKET>" },
+        { "name": "RATE_LIMIT_PER_24H", "value": "20" },
+        { "name": "MAX_LENGTH_SECONDS", "value": "180" },
+        { "name": "SWEEPER_ENABLED", "value": "true" },
+        { "name": "SWEEPER_INTERVAL_SECONDS", "value": "300" },
+        { "name": "STUCK_RUNNING_SECONDS", "value": "600" },
+        { "name": "STUCK_QUEUED_SECONDS", "value": "1800" },
+        {
+          "name": "ESTIMATED_COLD_START_SECONDS",
+          "value": "<ESTIMATED_COLD_START_SECONDS>"
+        },
+        { "name": "RITHM_DEV_ENDPOINTS", "value": "1" }
+      ],
+      "secrets": [
+        {
+          "name": "DB_IDENTITY_DSN",
+          "valueFrom": "<SECRET_RDS_ARN>:identity_dsn::"
+        },
+        {
+          "name": "DB_CATALOG_DSN",
+          "valueFrom": "<SECRET_RDS_ARN>:catalog_dsn::"
+        },
+        {
+          "name": "DB_GENERATION_DSN",
+          "valueFrom": "<SECRET_RDS_ARN>:generation_dsn::"
+        },
+        {
+          "name": "DB_CONVERSATION_DSN",
+          "valueFrom": "<SECRET_RDS_ARN>:conversation_dsn::"
+        },
+        {
+          "name": "DB_PERSONALIZATION_DSN",
+          "valueFrom": "<SECRET_RDS_ARN>:personalization_dsn::"
+        },
+        {
+          "name": "SSE_TOKEN_SECRET",
+          "valueFrom": "<SECRET_APP_ARN>:sse_signing_key::"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:8080/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rithm-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
 }

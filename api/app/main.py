@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -36,6 +37,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     init_db_engines()
 
+    # ── Stuck-job sweeper ──────────────────────────────────────
+    # Started here because this is the only place DB engines exist. It is given
+    # THIS app's hub, not a fresh one, so the `failed` frames it publishes reach
+    # the clients actually streaming. Disabled in the test fixture — otherwise
+    # every test run spawns a background DB task.
+    sweeper: asyncio.Task[None] | None = None
+    if settings.sweeper_enabled:
+        from app.modules.generation.service import generation_service
+
+        sweeper = asyncio.create_task(
+            generation_service.run_sweeper(app.state.sse_hub)
+        )
+        logger.info(
+            "sweeper_started",
+            interval_seconds=settings.sweeper_interval_seconds,
+        )
+
     logger.info(
         "startup_complete",
         environment=settings.environment,
@@ -44,6 +62,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # ── Shutdown ───────────────────────────────────────────────
+    if sweeper is not None:
+        sweeper.cancel()
+        # Awaiting the cancellation is what makes shutdown deterministic; a
+        # bare cancel() returns before the task has actually unwound.
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
     from app.shared.db import close_db_engines
     await close_db_engines()
     logger.info("shutdown_complete")
@@ -88,19 +113,35 @@ def create_app() -> FastAPI:
     # Bound here rather than in lifespan for the same reason the hub is: the
     # test suite's ASGITransport never runs lifespan, so anything lifespan-bound
     # is invisible to most of the suite.
-    from app.modules.catalog.service import CatalogService
+    from app.modules.catalog.service import catalog_service
     from app.modules.generation.service import generation_service
 
-    generation_service.track_writer = CatalogService()
+    # The module singleton, not a fresh instance — catalog's own router uses the
+    # same object, so patching it in a test patches one thing rather than two
+    # that happen to behave alike.
+    #
+    # It serves both directions: catalog writes the track on job completion
+    # (TrackWriter) and reads the parent a variation or refine derives from
+    # (TrackReader). The reader runs on catalog's OWN connection, which is what
+    # keeps rithm_generation's grant as narrow as Day 2 left it.
+    generation_service.track_writer = catalog_service
+    generation_service.track_reader = catalog_service
 
-    # ── Routers — added as modules are implemented (Days 6–33) ─
+    # ── Routers ────────────────────────────────────────────────
+    from app.modules.catalog import api as catalog_api
     from app.modules.generation import api as generation_api
     from app.modules.identity.api import router as identity_router
     from app.shared import health
 
     app.include_router(health.router)                    # /health, /health/deep
     app.include_router(identity_router, prefix="/api/v1")
+    # Generation BEFORE catalog: they share the /tracks prefix, generation
+    # owning the POST verbs and catalog the GET/DELETE. They cannot collide
+    # today (different methods) and every path param on both sides is typed
+    # UUID, but registering in this order means a future literal path segment
+    # cannot be swallowed by /tracks/{track_id} either.
     app.include_router(generation_api.router, prefix="/api/v1")
+    app.include_router(catalog_api.router, prefix="/api/v1")
     # Root-mounted: the SNS subscription URL hardcodes this exact path.
     app.include_router(generation_api.internal_router)
 

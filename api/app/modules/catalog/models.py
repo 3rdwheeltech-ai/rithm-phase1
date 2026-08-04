@@ -11,7 +11,7 @@ Nothing here migrates them.
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from sqlalchemy import RowMapping
@@ -33,6 +33,24 @@ class CreatedTrack(TypedDict):
 
     track_id: UUID
     mp3_key: str
+
+
+class ParentTrack(TypedDict):
+    """
+    What get_track_for_generation hands back to a variation/refine submit.
+
+    Declared here AND in generation/interfaces.py, identically, for the same
+    reason CreatedTrack is: catalog may not import generation, and TypedDict
+    assignability is structural, so two identical declarations satisfy each
+    other. Keep the two in sync.
+    """
+
+    track_id: UUID
+    user_id: UUID
+    prompt: str
+    params: dict[str, Any]
+    length_seconds: int
+
 
 # The UI dropdowns must match these exactly. They are NOT enforced by a CHECK
 # constraint — 02_catalog.sql deliberately commented the genre/mood CHECKs out
@@ -118,6 +136,27 @@ class TrackRow:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PromptRow:
+    """One row of catalog.prompt_history, typed."""
+
+    id: UUID
+    prompt: str
+    delta_command: str | None
+    kind: str
+    created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: RowMapping) -> "PromptRow":
+        return cls(
+            id=row["id"],
+            prompt=row["prompt"],
+            delta_command=row["delta_command"],
+            kind=row["kind"],
+            created_at=row["created_at"],
+        )
+
+
 # Column list shared by the SELECTs in service.py — keeps them in sync with
 # TrackRow.from_row above. `params` is excluded: it is write-mostly and callers
 # that want it should ask for it explicitly rather than pay for the JSONB on
@@ -127,3 +166,10 @@ TRACK_COLUMNS = (
     "inference_steps, prompt, lyrics, ref_audio_s3_key, s3_wav_key, "
     "s3_mp3_key, waveform_hash, created_at, updated_at, deleted_at"
 )
+
+# The ONE query that needs `params`: a variation copies the parent's generation
+# parameters wholesale. Given its own column list rather than widening
+# TRACK_COLUMNS, so every list query does not start paying for the JSONB.
+PARENT_TRACK_COLUMNS = "id, user_id, prompt, params, length_seconds"
+
+PROMPT_HISTORY_COLUMNS = "id, prompt, delta_command, kind, created_at"

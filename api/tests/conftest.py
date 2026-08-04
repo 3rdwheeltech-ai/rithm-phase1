@@ -14,8 +14,15 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.main import app
-from app.modules.generation.sse_hub import SSEHub
+# Set BEFORE app.main is imported, because get_settings() is lru_cached and the
+# import chain populates it. Without this, every fixture that runs lifespan
+# (TestClient does) spawns a real background DB task and the suite develops a
+# personality — intermittent connection errors from a sweeper ticking against a
+# database no test asked for.
+os.environ.setdefault("SWEEPER_ENABLED", "false")
+
+from app.main import app  # noqa: E402
+from app.modules.generation.sse_hub import SSEHub  # noqa: E402
 
 # ── Live-database opt-in ───────────────────────────────────────
 # Most of this suite runs against FakeSession: a real DB proves nothing extra
@@ -39,10 +46,10 @@ from app.modules.generation.sse_hub import SSEHub
 #                            connection is itself evidence the grant is as
 #                            narrow as intended.
 #
-# Setup, against the compose Postgres (host port 5433, database rithm-dev):
+# Setup, against the compose Postgres (host port 5433, database rithm-db):
 #
 #   docker compose up -d postgres
-#   BASE=localhost:5433/rithm-dev
+#   BASE=localhost:5433/rithm-db
 #   ADMIN=postgresql+asyncpg://rithm_admin:dev_admin_pw_change_me@$BASE
 #   GEN=postgresql+asyncpg://rithm_generation:dev_generation_pw@$BASE
 #
@@ -187,6 +194,37 @@ async def live_generation_engine() -> AsyncGenerator[None, None]:
         get_settings.cache_clear()
 
 
+@pytest_asyncio.fixture
+async def live_catalog_engine() -> AsyncGenerator[None, None]:
+    """
+    Point app.shared.db's CATALOG engine at the test database.
+
+    The Day-3 twin of live_generation_engine, and it uses the ADMIN DSN rather
+    than the module DSN on purpose: the read methods authenticate as
+    rithm_catalog in production, and the compose database's rithm_catalog role
+    is what the admin connection stands in for here. What these tests prove is
+    that the reads run on catalog's connection AT ALL — the generation role
+    would be refused, which is the whole reason TrackReader exists.
+    """
+    from app.config import get_settings
+    from app.shared.db import close_db_engines, init_db_engines
+
+    assert LIVE_DB_ADMIN_DSN is not None
+    previous = os.environ.get("DB_CATALOG_DSN")
+    os.environ["DB_CATALOG_DSN"] = LIVE_DB_ADMIN_DSN
+    get_settings.cache_clear()
+    init_db_engines()
+    try:
+        yield
+    finally:
+        await close_db_engines()
+        if previous is None:
+            os.environ.pop("DB_CATALOG_DSN", None)
+        else:
+            os.environ["DB_CATALOG_DSN"] = previous
+        get_settings.cache_clear()
+
+
 class FakeResult:
     """Stands in for a SQLAlchemy Result."""
 
@@ -195,6 +233,13 @@ class FakeResult:
 
     def first(self) -> Any:
         return self._rows[0] if self._rows else None
+
+    def all(self) -> list[Any]:
+        return list(self._rows)
+
+    def scalar_one(self) -> Any:
+        """Mirrors SQLAlchemy: first column of the single row."""
+        return self._rows[0][0]
 
     def mappings(self) -> "FakeResult":
         return self

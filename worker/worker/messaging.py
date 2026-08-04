@@ -18,18 +18,24 @@ logger = structlog.get_logger()
 # 20s is the SQS maximum. Long-polling is what keeps an idle worker from
 # burning a ReceiveMessage call every few milliseconds.
 _WAIT_TIME_SECONDS = 20
-# 300s must exceed the slowest job. A stub job is ~15s; a real 180s generation
-# on an L4 is the number Day-3's PoC will confirm this against.
-_VISIBILITY_TIMEOUT_SECONDS = 300
 
 
 def receive_one() -> dict[str, Any] | None:
-    """One message, or None after the long-poll expires."""
+    """
+    One message, or None after the long-poll expires.
+
+    VisibilityTimeout comes from settings, not a constant: the queue's own
+    default is 300s, and a real generation can exceed that. When it does, SQS
+    redelivers a job that is STILL RUNNING. The claim guard makes the second
+    delivery harmless, but it burns one of the three receives — and three of
+    those send a perfectly healthy job to the DLQ. The receive-level value
+    overrides the queue attribute, which is why setting it here is enough.
+    """
     response = aws.sqs().receive_message(
         QueueUrl=get_settings().sqs_jobs_queue_url,
         MaxNumberOfMessages=1,
         WaitTimeSeconds=_WAIT_TIME_SECONDS,
-        VisibilityTimeout=_VISIBILITY_TIMEOUT_SECONDS,
+        VisibilityTimeout=get_settings().sqs_visibility_timeout_seconds,
         MessageAttributeNames=["All"],
     )
     messages: list[dict[str, Any]] = response.get("Messages", [])
@@ -49,8 +55,8 @@ def release(receipt_handle: str) -> None:
     Hand a message straight back to the queue.
 
     Spot-interruption path only. A retryable failure deliberately does NOT call
-    this — it just declines to delete, and lets the 300s visibility lapse, which
-    spaces out retries instead of hot-looping a failing dependency.
+    this — it just declines to delete, and lets the visibility window lapse,
+    which spaces out retries instead of hot-looping a failing dependency.
     """
     aws.sqs().change_message_visibility(
         QueueUrl=get_settings().sqs_jobs_queue_url,

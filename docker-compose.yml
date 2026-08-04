@@ -5,14 +5,14 @@ services:
     ports:
       - "5433:5432"   # 5433 on host: a host-level Postgres already owns localhost:5432
     environment:
-      POSTGRES_DB: rithm-dev
+      POSTGRES_DB: rithm-db
       POSTGRES_USER: rithm_admin
       POSTGRES_PASSWORD: dev_admin_pw_change_me
     volumes:
       - rithm_pgdata:/var/lib/postgresql/data
       - ./ops/db:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rithm_admin -d rithm-dev"]
+      test: ["CMD-SHELL", "pg_isready -U rithm_admin -d rithm-db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -50,11 +50,11 @@ services:
       # AWS creds come from .env.local (real rithm-dev keys — needed for
       # Cognito AdminConfirmSignUp; LocalStack accepts any values).
       AWS_DEFAULT_REGION: us-east-1
-      DB_IDENTITY_DSN: postgresql+asyncpg://rithm_identity:dev_identity_pw@postgres:5432/rithm-dev
-      DB_CATALOG_DSN: postgresql+asyncpg://rithm_catalog:dev_catalog_pw@postgres:5432/rithm-dev
-      DB_GENERATION_DSN: postgresql+asyncpg://rithm_generation:dev_generation_pw@postgres:5432/rithm-dev
-      DB_CONVERSATION_DSN: postgresql+asyncpg://rithm_conversation:dev_conversation_pw@postgres:5432/rithm-dev
-      DB_PERSONALIZATION_DSN: postgresql+asyncpg://rithm_personalization:dev_personalization_pw@postgres:5432/rithm-dev
+      DB_IDENTITY_DSN: postgresql+asyncpg://rithm_identity:dev_identity_pw@postgres:5432/rithm-db
+      DB_CATALOG_DSN: postgresql+asyncpg://rithm_catalog:dev_catalog_pw@postgres:5432/rithm-db
+      DB_GENERATION_DSN: postgresql+asyncpg://rithm_generation:dev_generation_pw@postgres:5432/rithm-db
+      DB_CONVERSATION_DSN: postgresql+asyncpg://rithm_conversation:dev_conversation_pw@postgres:5432/rithm-db
+      DB_PERSONALIZATION_DSN: postgresql+asyncpg://rithm_personalization:dev_personalization_pw@postgres:5432/rithm-db
       ASSETS_BUCKET: rithm-assets-local
       SQS_JOBS_QUEUE_URL: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/rithm-generation-jobs
       SNS_COMPLETIONS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:rithm-job-completions

@@ -1,0 +1,502 @@
+"""
+The public write surface: generate, variation, refine.
+
+These run against FakeSession rather than Postgres, deliberately — what they
+assert is the SHAPE of what reaches the database and the queue: which params
+land in request_payload, that the SQS envelope matches the §1 contract, that a
+variation's seed differs from its parent's, and that an ownership miss enqueues
+nothing. A real database proves none of that better, and Gate C already proves
+the SQL runs.
+"""
+import json
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from app.modules.generation import service as generation_service_module
+from app.modules.generation.interfaces import ParentTrack
+from app.modules.generation.service import generation_service
+from app.shared.auth import require_user
+from tests.conftest import FakeSession
+
+USER_ID = UUID("00000000-0000-7000-8000-0000000000f1")
+OTHER_USER_ID = UUID("00000000-0000-7000-8000-0000000000f2")
+PARENT_TRACK_ID = UUID("00000000-0000-7000-8000-0000000000a1")
+
+PARENT_PARAMS: dict[str, Any] = {
+    "prompt": "warm lo-fi piano loop",
+    "genre": "Lo-Fi",
+    "mood": "Calm",
+    "bpm": 85,
+    "bpm_min": 80,
+    "bpm_max": 90,
+    "instruments": ["piano"],
+    "vocal": False,
+    "length_seconds": 30,
+    "seed": 111,
+}
+
+GENERATE_BODY: dict[str, Any] = {
+    "prompt": "warm lo-fi piano loop with soft vinyl crackle",
+    "genre": "Lo-Fi",
+    "mood": "Calm",
+    "bpm_min": 80,
+    "bpm_max": 90,
+    "instruments": ["piano"],
+    "vocal": False,
+    "length_seconds": 30,
+}
+
+
+class FakeTrackReader:
+    """Stands in for CatalogService's read side."""
+
+    def __init__(self, parent: ParentTrack | None) -> None:
+        self._parent = parent
+        self.calls: list[dict[str, UUID]] = []
+
+    async def get_track_for_generation(
+        self, *, track_id: UUID, user_id: UUID
+    ) -> ParentTrack | None:
+        self.calls.append({"track_id": track_id, "user_id": user_id})
+        if self._parent is None:
+            return None
+        # Ownership lives in the query in the real implementation; mirror it.
+        if self._parent["user_id"] != user_id:
+            return None
+        return self._parent
+
+
+def _parent(user_id: UUID = USER_ID) -> ParentTrack:
+    return {
+        "track_id": PARENT_TRACK_ID,
+        "user_id": user_id,
+        "prompt": PARENT_PARAMS["prompt"],
+        "params": dict(PARENT_PARAMS),
+        "length_seconds": 30,
+    }
+
+
+@pytest.fixture
+def sessions(monkeypatch: pytest.MonkeyPatch) -> list[FakeSession]:
+    """Every session the service opens, with the INSERT's RETURNING scripted."""
+    opened: list[FakeSession] = []
+
+    @asynccontextmanager
+    async def _session(_module: str) -> AsyncIterator[FakeSession]:
+        session = FakeSession(results=[[_Row(datetime.now(UTC))]])
+        opened.append(session)
+        yield session
+
+    monkeypatch.setattr(generation_service_module, "get_session", _session)
+    return opened
+
+
+class _Row:
+    def __init__(self, created_at: datetime) -> None:
+        self.created_at = created_at
+
+
+@pytest.fixture
+def rate_limited(monkeypatch: pytest.MonkeyPatch) -> list[FakeSession]:
+    """A session whose conditional INSERT matches zero rows."""
+    opened: list[FakeSession] = []
+
+    @asynccontextmanager
+    async def _session(_module: str) -> AsyncIterator[FakeSession]:
+        # First result: the INSERT returns nothing (limit reached). Then the
+        # count query, then the oldest-created_at query.
+        session = FakeSession(
+            results=[[], [(20,)], [_Row(datetime.now(UTC))]]
+        )
+        opened.append(session)
+        yield session
+
+    monkeypatch.setattr(generation_service_module, "get_session", _session)
+    return opened
+
+
+@pytest.fixture
+def sqs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    sent: list[dict[str, Any]] = []
+
+    async def _capture(
+        *, queue_url: str, body: str, attributes: Any = None
+    ) -> str:
+        sent.append({"queue_url": queue_url, "body": body, "attrs": attributes})
+        return "msg-1"
+
+    monkeypatch.setattr(
+        generation_service_module, "send_sqs_message", _capture
+    )
+    return sent
+
+
+@pytest.fixture
+def app_with_user(monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
+    from app.config import get_settings
+    from app.main import create_app
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("RITHM_DEV_ENDPOINTS", "0")
+    application = create_app()
+    application.dependency_overrides[require_user] = lambda: USER_ID
+    yield application
+    get_settings.cache_clear()
+
+
+@pytest_asyncio.fixture
+async def client(app_with_user: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_user), base_url="http://test"
+    ) as http:
+        yield http
+
+
+def _envelope(sqs: list[dict[str, Any]]) -> dict[str, Any]:
+    return json.loads(sqs[0]["body"])
+
+
+# ── generate ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_generate_submits_job(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    response = await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    assert response.status_code == 202
+    body = response.json()
+    assert set(body) == {"job_id", "status", "sse_url", "created_at"}
+    assert body["status"] == "QUEUED"
+    assert body["sse_url"].startswith(f"/api/v1/jobs/{body['job_id']}/events?")
+
+    envelope = _envelope(sqs)
+    assert envelope["schema_version"] == 1
+    assert envelope["job_id"] == body["job_id"]
+    assert envelope["user_id"] == str(USER_ID)
+    assert envelope["kind"] == "generate"
+    assert envelope["parent_track_id"] is None
+    assert envelope["audio_reference_url"] is None
+
+    params = envelope["params"]
+    # The range collapsed to its midpoint, and BOTH survive.
+    assert params["bpm"] == 85
+    assert params["bpm_min"] == 80
+    assert params["bpm_max"] == 90
+    # The API always mints a seed; a null one would make the run
+    # irreproducible and TTM-04 uncheckable.
+    assert isinstance(params["seed"], int)
+    assert params["seed"] > 0
+    assert params["delta_command"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sqs")
+async def test_generate_writes_a_queued_row(
+    client: AsyncClient, sessions: list[FakeSession]
+) -> None:
+    await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    statement, params = sessions[0].executed[0]
+    assert "INSERT INTO generation.jobs" in statement
+    assert "'QUEUED'" in statement
+    # The rate check is folded INTO the insert, so there is no window between
+    # counting and writing.
+    assert "count(*)" in statement
+    assert params["kind"] == "generate"
+    assert json.loads(params["payload"])["bpm"] == 85
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lo", "hi", "expected"),
+    [(None, None, None), (80, None, 80), (None, 90, 90), (80, 90, 85)],
+)
+@pytest.mark.usefixtures("sessions")
+async def test_bpm_resolution(
+    client: AsyncClient,
+    sqs: list[dict[str, Any]],
+    lo: int | None,
+    hi: int | None,
+    expected: int | None,
+) -> None:
+    body = {**GENERATE_BODY, "bpm_min": lo, "bpm_max": hi}
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["bpm"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_inverted_bpm_range_is_rejected(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    body = {**GENERATE_BODY, "bpm_min": 120, "bpm_max": 80}
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_overlong_request_is_rejected_by_the_schema(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    body = {**GENERATE_BODY, "length_seconds": 999}
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_runtime_length_cap_is_enforced_below_the_schema_bound(
+    client: AsyncClient,
+    sqs: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    app_with_user: FastAPI,
+) -> None:
+    """
+    MAX_LENGTH_SECONDS lets Tri lower the ceiling from the PoC findings without
+    a deploy — a dynamic Pydantic bound would be far more trouble than it is
+    worth for the same effect.
+    """
+    from app.config import get_settings
+    from app.modules.generation import api as generation_api
+
+    monkeypatch.setenv("MAX_LENGTH_SECONDS", "20")
+    get_settings.cache_clear()
+    monkeypatch.setattr(generation_api, "_settings", get_settings())
+
+    response = await AsyncClient(
+        transport=ASGITransport(app=app_with_user), base_url="http://test"
+    ).post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    assert response.status_code == 400
+    assert "20" in response.json()["detail"]
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+async def test_generate_rate_limited(
+    client: AsyncClient,
+    sqs: list[dict[str, Any]],
+    rate_limited: list[FakeSession],
+) -> None:
+    """429 with a Retry-After, and crucially NO message on the queue."""
+    response = await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    assert response.status_code == 429
+    assert int(response.headers["Retry-After"]) >= 1
+    assert sqs == []
+    # The conditional INSERT matched zero rows, so no job row exists either.
+    assert "count(*)" in rate_limited[0].executed[0][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_enqueue_failure_fails_the_job_and_returns_503(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The row is committed before the send, so an SQS failure leaves a job nothing
+    will ever pick up. It must be failed immediately rather than left for the
+    sweeper's 30 minutes.
+    """
+    async def _boom(**_kwargs: Any) -> str:
+        raise RuntimeError("sqs is down")
+
+    monkeypatch.setattr(
+        generation_service_module, "send_sqs_message", _boom
+    )
+
+    response = await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
+
+
+# ── variation ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_variation_copies_parent_params_with_a_new_seed(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    generation_service.track_reader = FakeTrackReader(_parent())
+
+    response = await client.post(
+        f"/api/v1/tracks/{PARENT_TRACK_ID}/variation"
+    )
+
+    assert response.status_code == 202
+    envelope = _envelope(sqs)
+    assert envelope["kind"] == "variation"
+    assert envelope["parent_track_id"] == str(PARENT_TRACK_ID)
+
+    params = envelope["params"]
+    # Same prompt is the entire point of a variation.
+    assert params["prompt"] == PARENT_PARAMS["prompt"]
+    assert params["genre"] == "Lo-Fi"
+    assert params["mood"] == "Calm"
+    assert params["bpm"] == 85
+    assert params["vocal"] is False
+    # ...and the seed is the ONLY thing that moved. TTM-04 depends on it.
+    assert params["seed"] != PARENT_PARAMS["seed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_variation_on_a_foreign_track_is_404_and_enqueues_nothing(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """404, never 403 — a 403 tells an attacker the track exists."""
+    generation_service.track_reader = FakeTrackReader(_parent(OTHER_USER_ID))
+
+    response = await client.post(
+        f"/api/v1/tracks/{PARENT_TRACK_ID}/variation"
+    )
+
+    assert response.status_code == 404
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_variation_on_a_missing_track_is_404(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    generation_service.track_reader = FakeTrackReader(None)
+
+    response = await client.post(f"/api/v1/tracks/{uuid4()}/variation")
+
+    assert response.status_code == 404
+    assert sqs == []
+
+
+# ── refine ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_refine_composes_the_prompt(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    generation_service.track_reader = FakeTrackReader(_parent())
+
+    response = await client.post(
+        f"/api/v1/tracks/{PARENT_TRACK_ID}/refine",
+        json={"delta_command": "make it darker and slower"},
+    )
+
+    assert response.status_code == 202
+    envelope = _envelope(sqs)
+    assert envelope["kind"] == "refine_fresh"
+    assert envelope["parent_track_id"] == str(PARENT_TRACK_ID)
+
+    params = envelope["params"]
+    assert params["prompt"] == (
+        "warm lo-fi piano loop. make it darker and slower"
+    )
+    # Carried in the payload so finalize_job can write prompt_history
+    # .delta_command without a second query.
+    assert params["delta_command"] == "make it darker and slower"
+    assert params["seed"] != PARENT_PARAMS["seed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_refine_audio_reference_is_rejected(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    Cut for launch (launch-plan §1.2). Rejected here with a written message AND
+    in the worker's run_inference — two layers, so it can never reach a GPU.
+    """
+    generation_service.track_reader = FakeTrackReader(_parent())
+
+    response = await client.post(
+        f"/api/v1/tracks/{PARENT_TRACK_ID}/refine",
+        json={
+            "delta_command": "use this as a reference",
+            "refinement_mode": "audio_reference",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "fresh" in response.json()["detail"]
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_refine_on_a_foreign_track_is_404(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    generation_service.track_reader = FakeTrackReader(_parent(OTHER_USER_ID))
+
+    response = await client.post(
+        f"/api/v1/tracks/{PARENT_TRACK_ID}/refine",
+        json={"delta_command": "darker"},
+    )
+
+    assert response.status_code == 404
+    assert sqs == []
+
+
+# ── pure functions ─────────────────────────────────────────────────────────
+
+
+def test_compose_refined_prompt_is_deterministic() -> None:
+    from app.modules.generation.service import compose_refined_prompt
+
+    assert (
+        compose_refined_prompt("a warm loop.", "make it darker")
+        == "a warm loop. make it darker"
+    )
+    assert (
+        compose_refined_prompt("a warm loop   ", "  make it darker  ")
+        == "a warm loop. make it darker"
+    )
+
+
+def test_compose_refined_prompt_respects_the_prompt_bound() -> None:
+    """Truncation keeps a long refinement chain inside prompt's 2000 chars."""
+    from app.modules.generation.service import compose_refined_prompt
+
+    assert len(compose_refined_prompt("x" * 1999, "y" * 500)) == 2000
+
+
+def test_variation_seed_always_differs_from_the_parent() -> None:
+    from app.modules.generation.service import new_seed_distinct_from
+
+    assert new_seed_distinct_from(None) > 0
+    for _ in range(200):
+        assert new_seed_distinct_from(42) != 42
+
+
+def test_genres_and_moods_match_the_catalog_vocabulary() -> None:
+    """
+    generation may not import catalog, so the two lists are written twice. This
+    test lives in tests/, outside the independence contract, and is the only
+    thing stopping them drifting apart on Day 4 when the UI dropdowns land.
+    """
+    from app.modules.catalog.models import GENRES, MOODS
+    from app.modules.generation.schemas import Genre, Mood
+
+    assert tuple(g.value for g in Genre) == GENRES
+    assert tuple(m.value for m in Mood) == MOODS

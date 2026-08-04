@@ -1,5 +1,8 @@
+from typing import Any
+
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -13,7 +16,7 @@ logger = structlog.get_logger()
 
 def _problem(
     status: int, title: str, request: Request, detail: object | None = None
-) -> dict:
+) -> dict[str, Any]:
     return {
         "type": f"https://rithm.dev/errors/{status}",
         "title": title,
@@ -30,9 +33,20 @@ def register_error_handlers(app: FastAPI) -> None:
     async def http_exception_handler(
         request: Request, exc: HTTPException
     ) -> JSONResponse:
+        # The message goes in BOTH fields. `title` is where Day 1 put it and
+        # what the existing clients read; `detail` is where RFC 7807 says an
+        # occurrence-specific explanation belongs, and leaving it null meant
+        # every error this API has ever returned carried a null detail. New
+        # clients should read `detail`.
+        body = _problem(exc.status_code, exc.detail, request, detail=exc.detail)
+        # Typed exceptions may contribute machine-readable fields alongside the
+        # prose — e.g. the rate limiter's retry_after_seconds, which the React
+        # error toast needs as a number and cannot get from a header it is not
+        # allowed to read unless CORS exposes it.
+        body.update(getattr(exc, "problem_extra", {}))
         return JSONResponse(
             status_code=exc.status_code,
-            content=_problem(exc.status_code, exc.detail, request),
+            content=body,
             headers=dict(exc.headers) if exc.headers else {},
         )
 
@@ -40,9 +54,17 @@ def register_error_handlers(app: FastAPI) -> None:
     async def validation_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # jsonable_encoder is not optional here: a Pydantic model_validator that
+        # raises ValueError puts the raw exception object in the error's `ctx`,
+        # and serialising that unencoded turns a 422 into a 500.
         return JSONResponse(
             status_code=422,
-            content=_problem(422, "Validation Error", request, detail=exc.errors()),
+            content=_problem(
+                422,
+                "Validation Error",
+                request,
+                detail=jsonable_encoder(exc.errors()),
+            ),
         )
 
     @app.exception_handler(Exception)

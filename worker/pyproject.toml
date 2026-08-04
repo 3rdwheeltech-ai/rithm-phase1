@@ -1,7 +1,7 @@
 [project]
 name = "rithm-worker"
 version = "0.1.0"
-requires-python = ">=3.11"        # 3.11 for best PyTorch 2.3 compat
+requires-python = ">=3.11"        # matches the API tree and both images
 dependencies = [
     "structlog>=24.1",
     "boto3>=1.34",
@@ -10,17 +10,12 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "uuid-utils>=0.9",
-]
-
-# GPU deps are an optional group so CI can install without CUDA.
-# torch is deliberately NOT a runtime dep: `--target stub` builds without CUDA,
-# and worker/inference.py imports torch only inside the real-inference branch.
-[dependency-groups]
-gpu = [
-    "torch>=2.3",
-    "torchaudio>=2.3",
-    # "transformers>=4.41",       # uncomment when ACE-Step API is confirmed
-    # "accelerate>=0.30",
+    # The ACE-Step client. The PoC settled that ACE-Step v1.5 is an HTTP server
+    # with its own checkout and its own deps, NOT a Python import — so the
+    # worker's entire model dependency is one HTTP library, and there is no
+    # torch, no CUDA and no `gpu` dependency group in this tree any more.
+    # ACE-Step's own requirements live in ACE-Step's repo, where they belong.
+    "httpx>=0.27",
 ]
 
 [build-system]
@@ -37,15 +32,6 @@ dev-dependencies = [
     "pyright>=1.1",
     "import-linter>=2.1",
 ]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cu121" }
-torchaudio = { index = "pytorch-cu121" }
-
-[[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
-explicit = true
 
 # ── Import boundary enforcement ─────────────────────────────────
 # The job pipeline is a layer cake: main drives processor, processor drives the
@@ -82,10 +68,9 @@ ignore = []
 # suppression is confined to the one module that touches the SDK — see its
 # docstring.
 "worker/aws.py" = ["ANN401"]
-# The loaded model handle is genuinely opaque until Day 3 tells us what
-# ACE-Step's entrypoint returns. Inventing a Protocol for it now would be a
-# guess that the real API then contradicts; these two modules only pass it
-# through. Narrow it to a real type once the PoC lands.
+# Decoded JSON from the ACE-Step server is genuinely `Any` until it has been
+# narrowed — _task_state exists precisely to do that narrowing in one place.
+# processor.py takes the model handle through as an opaque pass-through.
 "worker/inference.py" = ["ANN401"]
 "worker/processor.py" = ["ANN401"]
 # Test doubles stand in for boto3 clients and SQLAlchemy results; annotating

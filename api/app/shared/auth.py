@@ -6,6 +6,7 @@ Validates Cognito RS256 id_tokens via JWKS (keys cached in-process).
 `require_user`   — resolves cognito_sub → local `identity.users.id` (lazy-creates row if
                    this is the user's first request after signup).
 """
+from typing import Any, cast
 from uuid import UUID
 
 import jwt
@@ -32,7 +33,7 @@ _jwk_client = PyJWKClient(
 )
 
 
-def _decode(token: str) -> dict:
+def _decode(token: str) -> dict[str, Any]:
     signing_key = _jwk_client.get_signing_key_from_jwt(token).key
     return jwt.decode(
         token,
@@ -44,7 +45,7 @@ def _decode(token: str) -> dict:
     )
 
 
-async def require_claims(request: Request) -> dict:
+async def require_claims(request: Request) -> dict[str, Any]:
     """Extract and verify the Bearer id_token. Returns the decoded claims dict."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -64,7 +65,7 @@ async def require_claims(request: Request) -> dict:
 
 
 async def require_user(
-    claims: dict = Depends(require_claims),
+    claims: dict[str, Any] = Depends(require_claims),
     db: AsyncSession = Depends(get_identity_db),
 ) -> UUID:
     """
@@ -72,7 +73,7 @@ async def require_user(
     Creates the identity.users row lazily on the user's first authenticated request
     (ON CONFLICT DO NOTHING handles any race between signup and first login).
     """
-    sub: str = claims["sub"]
+    sub = str(claims["sub"])
 
     row = (
         await db.execute(
@@ -82,7 +83,7 @@ async def require_user(
     ).first()
 
     if row:
-        return row[0]
+        return cast(UUID, row[0])
 
     # Lazy creation — signup endpoint also inserts, so ON CONFLICT is the safety net.
     # flush() (not commit()) — get_identity_db owns the transaction and commits on exit.
@@ -103,4 +104,11 @@ async def require_user(
         )
     ).first()
 
-    return row[0]
+    if row is None:
+        # ON CONFLICT DO NOTHING swallowed the insert and the row is still
+        # absent: only reachable if it was deleted between the two statements.
+        # Better a 401 than an unhandled TypeError on a None subscript.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "User record could not be resolved"
+        )
+    return cast(UUID, row[0])

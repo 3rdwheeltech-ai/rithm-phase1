@@ -126,10 +126,13 @@ async def test_enqueue_writes_row_and_message(
     assert envelope["parent_track_id"] is None
     assert "submitted_at" in envelope
 
-    # bpm is a single scalar here — the bpm_min/bpm_max range collapse belongs
-    # to the Day-3 public route and must not leak into the envelope.
+    # Day 3 §1: the envelope carries the RESOLVED scalar bpm *and* the range it
+    # came from. bpm is what the worker conditions on and what catalog.tracks
+    # denormalises; bpm_min/bpm_max ride along for fidelity so the Day-4 UI can
+    # repopulate its slider, and the worker ignores them. Both must be present.
     assert "bpm" in envelope["params"]
-    assert "bpm_min" not in envelope["params"]
+    assert "bpm_min" in envelope["params"]
+    assert "bpm_max" in envelope["params"]
     assert envelope["params"]["length_seconds"] == 30
 
     assert sqs_messages[0]["attributes"] == {

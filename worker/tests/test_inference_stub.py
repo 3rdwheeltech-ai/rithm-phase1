@@ -1,11 +1,11 @@
 """
-The stub path must never drag torch in.
+The stub path must produce real audio, and must never drag torch in.
 
-`docker build --target stub` produces a CPU-only image with no torch wheel and
-no CUDA. A module-scope `import torch` — or one that creeps above the
-RITHM_STUB_INFERENCE branch during a refactor — turns that image into one that
-fails on startup rather than at build time, which is a much worse place to find
-out. Hence the sys.modules assertion.
+The torch assertion is now trivially true — the PoC settled that ACE-Step is an
+HTTP server, so no worker module imports torch at all and neither image carries
+it. The test stays as a TRIPWIRE: if someone later adds an in-process model
+path, this fails and forces them to revisit the image, the task definition and
+the GPU reservation together rather than one at a time.
 """
 import sys
 from pathlib import Path
@@ -57,13 +57,12 @@ def test_real_path_is_not_silently_a_stub(
 ) -> None:
     """With the flag off, both entry points must refuse rather than fake it."""
     monkeypatch.setenv("RITHM_STUB_INFERENCE", "0")
+    monkeypatch.delenv("ACESTEP_API_BASE", raising=False)
     get_settings.cache_clear()
 
-    # ModuleNotFoundError here means torch is absent (the guarded import did its
-    # job); NotImplementedError means torch was present and we reached the
-    # Day-3 placeholder. Either proves we did not fall through to the stub.
-    with pytest.raises((NotImplementedError, ModuleNotFoundError)):
+    with pytest.raises(inference.InferenceError):
         inference.load_acestep_model()
 
-    with pytest.raises(NotImplementedError):
+    # No model handle and the flag off: refuse rather than invent audio.
+    with pytest.raises(inference.InferenceError, match="model not loaded"):
         inference.run_inference(None, {"job_id": "x", "kind": "generate"})

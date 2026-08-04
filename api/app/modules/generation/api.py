@@ -9,9 +9,14 @@ Three routers with different mounting rules (see main.py):
   dev_router       → mounted at the root, and only when settings
                      .rithm_dev_endpoints is true.
 
-The public POST /tracks/generate|variation|refine routes are Day 3 and are
-deliberately absent — opening a GPU write path before the rate limiter exists
-is how you wake up to a budget alarm.
+This module owns the POST verbs under /tracks; catalog owns GET and DELETE.
+main.py registers this router FIRST and every path param is typed UUID, so
+`/tracks/generate` can never be swallowed by `/tracks/{track_id}` — today they
+differ by method anyway, but the ordering makes that true for any future
+addition too.
+
+Ownership misses on variation/refine return 404, never 403. A 403 tells an
+attacker the track exists.
 """
 import asyncio
 import json
@@ -21,19 +26,40 @@ from uuid import UUID
 
 import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
+from app.modules.generation.interfaces import ParentTrack
+from app.modules.generation.models import JobKind
 from app.modules.generation.schemas import (
     DevEnqueueRequest,
     DevEnqueueResponse,
+    GenerateRequest,
     GenerationParams,
+    JobAccepted,
+    RefinementMode,
+    RefineRequest,
     SSEEvent,
+    resolve_bpm,
 )
-from app.modules.generation.service import generation_service
+from app.modules.generation.service import (
+    EnqueueFailedError,
+    RateLimitedError,
+    compose_refined_prompt,
+    generation_service,
+    new_seed,
+    new_seed_distinct_from,
+)
 from app.modules.generation.sse_hub import SSEHub
 from app.modules.generation.sse_token import SSETokenError, mint, verify
+from app.shared.auth import require_user
+from app.shared.exceptions import (
+    EnqueueFailedException,
+    RateLimitExceededException,
+    ResourceNotFoundException,
+    UnsupportedRefinementException,
+)
 from app.shared.sns_verify import SNSVerificationError, verify_sns_signature
 
 logger = structlog.get_logger()
@@ -59,6 +85,174 @@ SYNTHETIC_USER_ID = UUID("00000000-0000-7000-8000-000000000001")
 
 def _frame(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+# ── Public write surface ───────────────────────────────────────────────────
+
+
+async def _submit(
+    *,
+    user_id: UUID,
+    kind: JobKind,
+    params: GenerationParams,
+    parent_track_id: UUID | None = None,
+) -> JobAccepted:
+    """
+    The shared tail of all three write routes.
+
+    Everything above this point has already resolved the job's params — that is
+    the whole architectural bet of Day 3 (§B0.1). A variation's params are the
+    parent's with a fresh seed; a refine's are the parent's with a composed
+    prompt. By the time we get here the three kinds are indistinguishable, and
+    the worker never learns they were ever different.
+    """
+    # Runtime cap on top of the schema's static le=180, so Tri can lower the
+    # ceiling from the PoC findings via env without a deploy.
+    max_length = _settings.max_length_seconds
+    if params.length_seconds > max_length:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"length_seconds must be at most {max_length}.",
+        )
+
+    try:
+        job_id, created_at = await generation_service.submit(
+            user_id=user_id,
+            kind=kind,
+            params=params,
+            parent_track_id=parent_track_id,
+            rate_limit=_settings.rate_limit_per_24h,
+        )
+    except RateLimitedError as exc:
+        raise RateLimitExceededException(
+            retry_after_seconds=exc.retry_after_seconds,
+            used=exc.used,
+            limit=exc.limit,
+        ) from exc
+    except EnqueueFailedError as exc:
+        raise EnqueueFailedException() from exc
+
+    token = mint(
+        str(user_id),
+        str(job_id),
+        _settings.sse_token_secret.get_secret_value(),
+        _settings.sse_token_ttl_seconds,
+    )
+    return JobAccepted(
+        job_id=job_id,
+        status="QUEUED",
+        sse_url=f"/api/v1/jobs/{job_id}/events?token={token}",
+        created_at=created_at,
+    )
+
+
+async def _parent_or_404(track_id: UUID, user_id: UUID) -> ParentTrack:
+    parent = await generation_service.load_parent_track(
+        track_id=track_id, user_id=user_id
+    )
+    if parent is None:
+        # Covers "no such track" and "not yours" identically, on purpose.
+        raise ResourceNotFoundException("Track", str(track_id))
+    return parent
+
+
+@router.post(
+    "/tracks/generate",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_track(
+    body: GenerateRequest,
+    user_id: UUID = Depends(require_user),
+) -> JobAccepted:
+    """Submit a new generation (TTM-01 + the GMC-01..05 controls)."""
+    params = GenerationParams(
+        prompt=body.prompt,
+        genre=body.genre,
+        mood=body.mood,
+        # Both the resolved scalar and the range it came from: the worker
+        # conditions on bpm, catalog indexes it, and the Day-4 UI needs the
+        # range back to repopulate its slider.
+        bpm=resolve_bpm(body.bpm_min, body.bpm_max),
+        bpm_min=body.bpm_min,
+        bpm_max=body.bpm_max,
+        instruments=body.instruments,
+        vocal=body.vocal,
+        length_seconds=body.length_seconds,
+        seed=new_seed(),
+    )
+    return await _submit(user_id=user_id, kind="generate", params=params)
+
+
+@router.post(
+    "/tracks/{track_id}/variation",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_variation(
+    track_id: UUID,
+    user_id: UUID = Depends(require_user),
+) -> JobAccepted:
+    """
+    Re-roll a track with the same prompt and a different seed (TTM-04).
+
+    No body: an unchanged prompt is the entire point of a variation. The only
+    thing that moves is the seed, and it is guaranteed to differ from the
+    parent's — "the variation's waveform_hash differs from its parent's" is an
+    acceptance criterion, and a duplicate seed would break it irreproducibly.
+    """
+    parent = await _parent_or_404(track_id, user_id)
+    params = GenerationParams.model_validate(
+        {
+            **parent["params"],
+            "prompt": parent["prompt"],
+            "seed": new_seed_distinct_from(parent["params"].get("seed")),
+        }
+    )
+    return await _submit(
+        user_id=user_id,
+        kind="variation",
+        params=params,
+        parent_track_id=track_id,
+    )
+
+
+@router.post(
+    "/tracks/{track_id}/refine",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def refine_track(
+    track_id: UUID,
+    body: RefineRequest,
+    user_id: UUID = Depends(require_user),
+) -> JobAccepted:
+    """
+    Regenerate a track with a natural-language adjustment applied (PE-03, fresh).
+
+    The prompt is composed deterministically here rather than through an LLM —
+    see compose_refined_prompt for why there is no Bedrock call on this path.
+    """
+    if body.refinement_mode is RefinementMode.AUDIO_REFERENCE:
+        raise UnsupportedRefinementException()
+
+    parent = await _parent_or_404(track_id, user_id)
+    params = GenerationParams.model_validate(
+        {
+            **parent["params"],
+            "prompt": compose_refined_prompt(
+                parent["prompt"], body.delta_command
+            ),
+            "delta_command": body.delta_command,
+            "seed": new_seed(),
+        }
+    )
+    return await _submit(
+        user_id=user_id,
+        kind="refine_fresh",
+        params=params,
+        parent_track_id=track_id,
+    )
 
 
 async def _event_stream(hub: SSEHub, job_id: str) -> AsyncIterator[str]:
@@ -211,7 +405,9 @@ async def enqueue_test_job(body: DevEnqueueRequest) -> DevEnqueueResponse:
     params = body.params or GenerationParams(
         prompt="stub test tone", length_seconds=30
     )
-    job_id = await generation_service.submit(
+    # No rate_limit: dev-enqueue must be able to drive a gate repeatedly
+    # without burning a real user's daily budget.
+    job_id, _ = await generation_service.submit(
         user_id=SYNTHETIC_USER_ID, kind=body.kind, params=params
     )
     token = mint(

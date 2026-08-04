@@ -35,7 +35,7 @@ def worker_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("SQS_JOBS_QUEUE_URL", QUEUE_URL)
     monkeypatch.setenv("ASSETS_BUCKET", "rithm-assets-local")
     monkeypatch.setenv(
-        "DB_GENERATION_DSN_SYNC", "postgresql://u:p@localhost:5433/rithm-dev"
+        "DB_GENERATION_DSN_SYNC", "postgresql://u:p@localhost:5433/rithm-db"
     )
     monkeypatch.setenv("RITHM_STUB_INFERENCE", "1")
     monkeypatch.setenv("WORKER_IDLE_EXIT_SECONDS", "0")
@@ -117,15 +117,20 @@ def make_message(
         "job_id": job_id,
         "user_id": user_id,
         "kind": kind,
+        # Day 3: the API resolves bpm to a scalar and ALWAYS mints a seed, so
+        # neither is ever null on the wire. bpm_min/bpm_max ride along for
+        # fidelity and are ignored by the worker.
         "params": {
             "prompt": "stub test tone",
             "genre": None,
             "mood": None,
             "bpm": None,
+            "bpm_min": None,
+            "bpm_max": None,
             "instruments": [],
             "vocal": True,
             "length_seconds": 30,
-            "seed": None,
+            "seed": 1839201773,
         },
         "audio_reference_url": None,
         "parent_track_id": None,

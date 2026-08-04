@@ -389,3 +389,295 @@ async def test_track_write_failure_rolls_back_the_job_update(
 
     assert await _job_status(admin_session, job_ids["job"]) == "QUEUED"
     assert await _count_tracks(admin_session, job_ids["job"]) == 0
+
+
+# ── Day 3: the catalog read path, on the CATALOG connection ────
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_get_track_for_generation_reads_on_the_catalog_connection(
+    live_session: AsyncSession,
+    admin_session: AsyncSession,
+    job_ids: dict[str, UUID],
+) -> None:
+    """
+    The parent lookup a variation/refine depends on.
+
+    This is the test that proves the design decision in §B0.2: reading the
+    parent's prompt and params needs table-level SELECT, rithm_generation
+    deliberately does NOT have it, and so the read must run as rithm_catalog.
+    The write below still goes through the generation session — mixing the two
+    connections in one test is exactly the shape production runs.
+    """
+    await _write_track(live_session, job_ids)
+    await live_session.commit()
+
+    parent = await CatalogService().get_track_for_generation(
+        track_id=await _track_id(admin_session, job_ids["job"]),
+        user_id=job_ids["user"],
+    )
+
+    assert parent is not None
+    assert parent["prompt"] == _PARAMS["prompt"]
+    # params is the whole point: a variation copies it wholesale.
+    assert parent["params"]["genre"] == "Lo-Fi"
+    assert parent["params"]["bpm"] == 90
+    assert parent["length_seconds"] == 30
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_get_track_for_generation_hides_another_users_track(
+    live_session: AsyncSession,
+    admin_session: AsyncSession,
+    job_ids: dict[str, UUID],
+) -> None:
+    """None, not a row — the route turns it into a 404 rather than a 403."""
+    await _write_track(live_session, job_ids)
+    await live_session.commit()
+
+    parent = await CatalogService().get_track_for_generation(
+        track_id=await _track_id(admin_session, job_ids["job"]),
+        user_id=_uuid(),
+    )
+
+    assert parent is None
+
+
+async def test_finalize_writes_delta_command_for_a_refine(
+    live_session: AsyncSession,
+    admin_session: AsyncSession,
+    job_ids: dict[str, UUID],
+) -> None:
+    """
+    prompt_history.delta_command exists precisely for this, and Day 2 always
+    wrote NULL. It rides in request_payload, so no new column and no new query.
+    """
+    await CatalogService().create_track_in_txn(
+        live_session,
+        user_id=job_ids["user"],
+        source_job_id=job_ids["job"],
+        kind="refine_fresh",
+        prompt="a warm lo-fi loop. make it darker",
+        params={**_PARAMS, "delta_command": "make it darker"},
+        s3_wav_key=_WAV_KEY,
+        s3_mp3_key=_MP3_KEY,
+        waveform_hash="b" * 64,
+        delta_command="make it darker",
+    )
+    await live_session.commit()
+
+    row = (
+        await admin_session.execute(
+            text(
+                """
+                SELECT ph.kind, ph.delta_command
+                  FROM catalog.prompt_history ph
+                  JOIN catalog.tracks t ON t.id = ph.track_id
+                 WHERE t.source_job_id = :jid
+                """
+            ),
+            {"jid": str(job_ids["job"])},
+        )
+    ).first()
+
+    assert row is not None
+    # refine_fresh maps to prompt_history.kind='refine_fresh'; a `generate`
+    # job would map to 'initial'. The two vocabularies differ on purpose.
+    assert row.kind == "refine_fresh"
+    assert row.delta_command == "make it darker"
+
+
+async def _track_id(admin: AsyncSession, job_id: UUID) -> UUID:
+    result = await admin.execute(
+        text("SELECT id FROM catalog.tracks WHERE source_job_id = :jid"),
+        {"jid": str(job_id)},
+    )
+    return UUID(str(result.scalar_one()))
+
+
+# ── Day 3: the read surface, against real Postgres ─────────────
+#
+# These four are behavioural, not SQL-shape assertions, and none of them can be
+# faked convincingly: keyset pagination is only correct if a real ORDER BY and a
+# real row comparison agree, and "excluded" only means something when the row is
+# genuinely present in the table and still does not come back.
+
+
+@pytest_asyncio.fixture
+async def seeded_tracks(
+    admin_session: AsyncSession,
+) -> AsyncIterator[dict[str, Any]]:
+    """25 tracks for one user, plus one deleted and one owned by someone else."""
+    owner, stranger = _uuid(), _uuid()
+    job = _uuid()
+
+    async def _insert(
+        user_id: UUID, index: int, deleted: bool = False
+    ) -> UUID:
+        track_id = _uuid()
+        await admin_session.execute(
+            text(
+                """
+                INSERT INTO catalog.tracks
+                    (id, user_id, source_job_id, genre, mood, bpm, vocal,
+                     length_seconds, prompt, params, s3_wav_key, s3_mp3_key,
+                     waveform_hash, created_at, deleted_at)
+                VALUES
+                    (:id, :user_id, :job, 'Lo-Fi', 'Calm', 85, false, 30,
+                     :prompt, CAST(:params AS JSONB), :wav, :mp3, :hash,
+                     now() - make_interval(secs => :offset),
+                     CASE WHEN :deleted THEN now() ELSE NULL END)
+                """
+            ),
+            {
+                "id": str(track_id),
+                "user_id": str(user_id),
+                "job": str(_uuid()),
+                "prompt": f"track {index}",
+                "params": json.dumps({**_PARAMS, "index": index}),
+                "wav": f"tracks/{index}/master.wav",
+                "mp3": f"tracks/{index}/audio.mp3",
+                "hash": "a" * 64,
+                # Distinct created_at per row so the keyset order is total and
+                # the assertions below are not at the mercy of a tie.
+                "offset": index,
+                "deleted": deleted,
+            },
+        )
+        return track_id
+
+    live = [await _insert(owner, i) for i in range(25)]
+    deleted = await _insert(owner, 99, deleted=True)
+    foreign = await _insert(stranger, 98)
+    await admin_session.commit()
+
+    yield {
+        "owner": owner,
+        "stranger": stranger,
+        "live": live,
+        "deleted": deleted,
+        "foreign": foreign,
+    }
+
+    for user in (owner, stranger):
+        await admin_session.execute(
+            text("DELETE FROM catalog.tracks WHERE user_id = :uid"),
+            {"uid": str(user)},
+        )
+    await admin_session.execute(
+        text("DELETE FROM generation.jobs WHERE id = :jid"), {"jid": str(job)}
+    )
+    await admin_session.commit()
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_keyset_pagination_walks_without_overlap_or_gap(
+    seeded_tracks: dict[str, Any],
+) -> None:
+    """
+    Three pages of ten over 25 rows. The properties that matter are that every
+    track appears EXACTLY once and that the last page stops advertising a
+    cursor — an off-by-one in the limit+1 handling breaks one or the other.
+    """
+    service = CatalogService()
+    owner = seeded_tracks["owner"]
+
+    seen: list[UUID] = []
+    cursor: tuple[Any, UUID] | None = None
+    pages = 0
+
+    while True:
+        tracks, has_more, total = await service.list_tracks(
+            user_id=owner, limit=10, cursor=cursor
+        )
+        pages += 1
+        seen.extend(track.id for track in tracks)
+        assert total == 25, "the deleted and foreign rows must not be counted"
+        if not has_more:
+            break
+        cursor = (tracks[-1].created_at, tracks[-1].id)
+        assert pages < 10, "pagination did not terminate"
+
+    assert pages == 3
+    assert len(seen) == 25
+    assert len(set(seen)) == 25, "a track was returned on two different pages"
+    assert set(seen) == set(seeded_tracks["live"])
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_list_is_newest_first(seeded_tracks: dict[str, Any]) -> None:
+    tracks, _, _ = await CatalogService().list_tracks(
+        user_id=seeded_tracks["owner"], limit=25, cursor=None
+    )
+    timestamps = [track.created_at for track in tracks]
+    assert timestamps == sorted(timestamps, reverse=True)
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_list_excludes_deleted_and_other_users(
+    seeded_tracks: dict[str, Any],
+) -> None:
+    """Both rows genuinely exist in the table; neither may come back."""
+    service = CatalogService()
+    owner = seeded_tracks["owner"]
+
+    tracks, _, total = await service.list_tracks(
+        user_id=owner, limit=100, cursor=None
+    )
+    returned = {track.id for track in tracks}
+
+    assert seeded_tracks["deleted"] not in returned
+    assert seeded_tracks["foreign"] not in returned
+    assert total == 25
+
+    # ...and the same two are unreachable by direct fetch, as 404s rather than
+    # as 403s: get_track cannot distinguish "deleted", "not yours" and "absent".
+    assert await service.get_track(
+        track_id=seeded_tracks["deleted"], user_id=owner
+    ) is None
+    assert await service.get_track(
+        track_id=seeded_tracks["foreign"], user_id=owner
+    ) is None
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_soft_delete_hides_the_row_but_keeps_it(
+    seeded_tracks: dict[str, Any], admin_session: AsyncSession
+) -> None:
+    """
+    Soft means recoverable. The row must survive with deleted_at set, and the
+    second delete must report False so the route can 404 rather than lie.
+    """
+    service = CatalogService()
+    owner = seeded_tracks["owner"]
+    target = seeded_tracks["live"][0]
+
+    assert await service.soft_delete_track(track_id=target, user_id=owner)
+    assert await service.get_track(track_id=target, user_id=owner) is None
+    # Idempotent: nothing left to delete.
+    assert not await service.soft_delete_track(track_id=target, user_id=owner)
+
+    row = (
+        await admin_session.execute(
+            text(
+                "SELECT deleted_at FROM catalog.tracks WHERE id = :id"
+            ),
+            {"id": str(target)},
+        )
+    ).first()
+    assert row is not None, "soft delete must not remove the row"
+    assert row.deleted_at is not None
+
+    _, _, total = await service.list_tracks(
+        user_id=owner, limit=100, cursor=None
+    )
+    assert total == 24
+
+
+@pytest.mark.usefixtures("live_catalog_engine")
+async def test_soft_delete_refuses_another_users_track(
+    seeded_tracks: dict[str, Any],
+) -> None:
+    assert not await CatalogService().soft_delete_track(
+        track_id=seeded_tracks["foreign"], user_id=seeded_tracks["owner"]
+    )

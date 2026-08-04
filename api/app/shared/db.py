@@ -71,6 +71,20 @@ async def get_identity_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def get_catalog_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    FastAPI dependency: catalog-module session (auto-commit on success).
+
+    Authenticates as rithm_catalog, which already holds SELECT/INSERT/UPDATE/
+    DELETE on the catalog schema (ops/db/00_init.sql) — the read endpoints need
+    no new grant. Do NOT reach catalog tables through the generation session:
+    that role has only column-scoped SELECT (id, source_job_id) and every read
+    will fail with "permission denied for table tracks".
+    """
+    async with get_session("catalog") as session:
+        yield session
+
+
 async def get_generation_db() -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency: generation-module session (auto-commit on success).
