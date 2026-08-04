@@ -6,15 +6,15 @@ def setup_cors(app: FastAPI) -> None:
     from app.config import get_settings
     settings = get_settings()
 
-    # In prod, restrict to the CloudFront domain only.
-    # In local/test, allow localhost origins.
-    if settings.environment == "prod":
-        origins = [f"https://{settings.cloudfront_distribution_domain}"]
-    else:
-        origins = [
-            "http://localhost:5173",  # vite dev server
-            "http://localhost:3000",
-        ]
+    # Origins come from the environment, not from a branch on `environment`.
+    # Production is SAME-ORIGIN through CloudFront and needs no entry at all;
+    # this list exists so the Vite dev server can call a deployed API. See
+    # Settings.cors_allowed_origins for why there is no wildcard.
+    origins = [
+        origin.strip()
+        for origin in settings.cors_allowed_origins.split(",")
+        if origin.strip()
+    ]
 
     app.add_middleware(
         CORSMiddleware,

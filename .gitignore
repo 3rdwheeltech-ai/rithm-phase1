@@ -18,6 +18,12 @@ web/dist/
 .env.local
 *.pem
 *.key
+# Account-scoped infrastructure: ALB DNS, RDS endpoint, queue/topic ARNs,
+# cluster and log-group names. Not secret in the credential sense, but not for
+# a public repo either — and `git add -A` would otherwise sweep both in.
+.env.arn
+taskdef.json
+session-manager-plugin.deb
 
 # IDE
 .vscode/

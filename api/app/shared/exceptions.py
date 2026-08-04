@@ -85,6 +85,32 @@ class UnsupportedRefinementException(HTTPException):
         )
 
 
+class SSETokenExpiredException(HTTPException):
+    """
+    The stream token aged out — distinct from every other 401 on purpose.
+
+    A client whose EventSource dies cannot read the response status from the
+    EventSource itself, so it probes the URL with a plain fetch and matches on
+    this `type`. Matching tells it to stop reconnecting and switch to polling
+    GET /jobs/{id}; a generic 401 would instead read as "logged out" and send
+    the user to /login mid-generation.
+
+    Only expiry gets this. A malformed token, a bad signature or a token/job
+    mismatch stay generic — those are not recoverable by polling.
+    """
+
+    problem_type = "https://rithm.dev/errors/sse-token-expired"
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=401,
+            detail=(
+                "Stream token expired. Re-request the job status to continue "
+                "tracking this generation."
+            ),
+        )
+
+
 class ConflictException(HTTPException):
     def __init__(self, detail: str) -> None:
         super().__init__(status_code=409, detail=detail)

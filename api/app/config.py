@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # Runtime environment
     environment: str = "local"   # local | prod — drives SSL, docs visibility, etc.
 
+    # Browser origins allowed to call this API cross-origin, comma-separated.
+    # This exists ONLY so `npm run dev` on localhost:5173 works. Production is
+    # SAME-ORIGIN — CloudFront serves the SPA at / and proxies /api/* to the
+    # ALB — so prod needs no entry here at all. Do not add the CloudFront
+    # domain "to be safe", and never a wildcard: with allow_credentials a
+    # browser rejects "*" outright, so it is a silent breakage, not a shortcut.
+    cors_allowed_origins: str = "http://localhost:5173"
+
     # Database — one DSN per bounded-context module
     # Format: postgresql+asyncpg://user:pw@host:port/dbname
     db_identity_dsn: SecretStr
@@ -51,7 +59,12 @@ class Settings(BaseSettings):
 
     # Operational knobs
     log_level: str = "INFO"
-    sse_token_ttl_seconds: int = 300
+    # 1800, not 300. A cold start is minutes and a 5-minute token is shorter
+    # than the wait it exists to cover: the first generation of a session can
+    # outlive its own stream token, so a single reconnect after a wifi blip
+    # 401s permanently and the user watches a spinner forever. It cannot
+    # reproduce locally, because local has no cold start.
+    sse_token_ttl_seconds: int = 1800
     sse_token_secret: SecretStr = SecretStr("dev-sse-secret-change-me")
     rate_limit_per_24h: int = 20
     # The API-side length ceiling, mirroring the worker's. On the schema the

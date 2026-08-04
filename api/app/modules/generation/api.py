@@ -38,6 +38,7 @@ from app.modules.generation.schemas import (
     GenerateRequest,
     GenerationParams,
     JobAccepted,
+    JobStatusResponse,
     RefinementMode,
     RefineRequest,
     SSEEvent,
@@ -52,12 +53,19 @@ from app.modules.generation.service import (
     new_seed_distinct_from,
 )
 from app.modules.generation.sse_hub import SSEHub
-from app.modules.generation.sse_token import SSETokenError, mint, verify
+from app.modules.generation.sse_token import (
+    SSETokenError,
+    SSETokenExpired,
+    mint,
+    verify,
+)
 from app.shared.auth import require_user
+from app.shared.aws import presign_get
 from app.shared.exceptions import (
     EnqueueFailedException,
     RateLimitExceededException,
     ResourceNotFoundException,
+    SSETokenExpiredException,
     UnsupportedRefinementException,
 )
 from app.shared.sns_verify import SNSVerificationError, verify_sns_signature
@@ -284,7 +292,15 @@ async def _event_stream(hub: SSEHub, job_id: str) -> AsyncIterator[str]:
                     queue.get(), timeout=_HEARTBEAT_SECONDS
                 )
             except TimeoutError:
-                yield ": keepalive\n\n"
+                # A NAMED event, not the conventional `: keepalive` comment.
+                # Comments are invisible to the browser's EventSource — no
+                # handler fires for them — so a client cannot tell "the server
+                # is still talking to me, the job just hasn't moved" from "this
+                # stream is open but dead because the completion landed on
+                # another API task". The client's staleness watchdog needs that
+                # distinction, and this is the only way it can observe one.
+                # Clients that do not listen for it simply drop it.
+                yield _frame("keepalive", {})
                 continue
             yield _frame(event["event"], event["data"])
             if event["event"] in _TERMINAL_EVENTS:
@@ -301,6 +317,45 @@ async def _event_stream(hub: SSEHub, job_id: str) -> AsyncIterator[str]:
         hub.unsubscribe(job_id, queue)
 
 
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def job_status(
+    job_id: UUID,
+    user_id: UUID = Depends(require_user),
+) -> JobStatusResponse:
+    """
+    Current status of one job.
+
+    This is what makes the client's polling fallback possible. Without it, a
+    client whose SSE stream dies — a deploy briefly running two API tasks, or a
+    stream token that outlived a cold start — has literally no way to learn that
+    its job finished, and the only honest UI left is a spinner that never
+    resolves.
+
+    Polled at 5s intervals by any stranded client, so it stays one statement.
+    """
+    row = await generation_service.load_job_status(job_id=job_id, user_id=user_id)
+    if row is None:
+        # Unknown and foreign are the same answer, on purpose.
+        raise ResourceNotFoundException("Job", str(job_id))
+
+    completed = row.status == "COMPLETED"
+    return JobStatusResponse(
+        job_id=row.id,
+        status=row.status,  # type: ignore[arg-type]  # CHECK-constrained in DDL
+        kind=row.kind,
+        created_at=row.created_at,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        error=row.error,
+        track_id=row.track_id,
+        mp3_url=(
+            presign_get(row.s3_mp3_key)
+            if completed and row.s3_mp3_key
+            else None
+        ),
+    )
+
+
 @router.get("/jobs/{job_id}/events")
 async def job_events(
     job_id: str,
@@ -315,6 +370,10 @@ async def job_events(
         payload = verify(
             token, _settings.sse_token_secret.get_secret_value()
         )
+    except SSETokenExpired as exc:
+        # Distinct from every other 401 so the client can tell "poll instead"
+        # from "log out" — see SSETokenExpiredException.
+        raise SSETokenExpiredException() from exc
     except SSETokenError as exc:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid or expired token"

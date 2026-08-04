@@ -44,6 +44,11 @@ def register_error_handlers(app: FastAPI) -> None:
         # error toast needs as a number and cannot get from a header it is not
         # allowed to read unless CORS exposes it.
         body.update(getattr(exc, "problem_extra", {}))
+        # ...and may override the type URI. By default `type` is derived from
+        # the status code alone, so every 401 shares one URI — which leaves a
+        # client unable to tell "your stream token aged out, fall back to
+        # polling" from "you are logged out, go to /login". It will pick wrong.
+        body["type"] = getattr(exc, "problem_type", body["type"])
         return JSONResponse(
             status_code=exc.status_code,
             content=body,

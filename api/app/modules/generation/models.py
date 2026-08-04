@@ -87,6 +87,41 @@ class JobRow:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class JobStatusRow:
+    """
+    The owner-scoped status projection behind GET /jobs/{job_id}.
+
+    Narrower than JobRow on purpose: this is polled every 5s by any client whose
+    SSE stream died, so it selects only what that client needs to decide whether
+    to keep waiting.
+    """
+
+    id: UUID
+    status: str
+    kind: str
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    error: str | None
+    s3_mp3_key: str | None
+    track_id: UUID | None
+
+    @classmethod
+    def from_row(cls, row: RowMapping) -> "JobStatusRow":
+        return cls(
+            id=row["id"],
+            status=row["status"],
+            kind=row["kind"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            error=row["error"],
+            s3_mp3_key=row["s3_mp3_key"],
+            track_id=row["track_id"],
+        )
+
+
 # Column list shared by the SELECTs in service.py — keeps them in sync with
 # JobRow.from_row above.
 JOB_COLUMNS = (

@@ -35,6 +35,7 @@ from app.modules.generation.models import (
     JobKind,
     JobRow,
     JobStatus,
+    JobStatusRow,
 )
 from app.modules.generation.schemas import GenerationParams, SSEEvent
 from app.modules.generation.sse_hub import SSEHub
@@ -410,6 +411,46 @@ class GenerationService:
         if row is None:
             return None
         return _job_to_event(JobRow.from_row(row))
+
+    async def load_job_status(
+        self, *, job_id: UUID, user_id: UUID
+    ) -> JobStatusRow | None:
+        """
+        Owner-scoped status of one job, for the client polling fallback.
+
+        Returns None for an unknown id AND for another user's job — the route
+        answers both with 404. A 403 would confirm the id exists, which is an
+        ownership oracle you get nothing for.
+
+        The LEFT JOIN reaches catalog.tracks on the GENERATION connection, which
+        is legal precisely because it touches only (id, source_job_id):
+        rithm_generation holds column-scoped SELECT on exactly those two
+        (catalog migration 0002). Widen this projection by one column and it
+        fails with a permission error at runtime, not at import.
+
+        Note there is no `deleted_at IS NULL` filter — no grant on that column,
+        and none is wanted here. This reports what the job produced; whether the
+        track is still in the user's library is catalog's question to answer.
+        """
+        async with get_session("generation") as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT j.id, j.status, j.kind, j.created_at, j.started_at,
+                           j.completed_at, j.error, j.s3_mp3_key,
+                           t.id AS track_id
+                      FROM generation.jobs j
+                      LEFT JOIN catalog.tracks t
+                             ON t.source_job_id = j.id
+                     WHERE j.id = CAST(:job_id AS uuid)
+                       AND j.user_id = CAST(:user_id AS uuid)
+                    """
+                ),
+                {"job_id": str(job_id), "user_id": str(user_id)},
+            )
+            row = result.mappings().first()
+
+        return None if row is None else JobStatusRow.from_row(row)
 
     async def finalize_job(
         self,

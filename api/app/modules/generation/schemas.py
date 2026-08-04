@@ -149,6 +149,27 @@ class JobAccepted(BaseModel):
     created_at: datetime
 
 
+class JobStatusResponse(BaseModel):
+    """
+    GET /jobs/{job_id} — the polling fallback for a client whose stream died.
+
+    Named ...Response because `JobStatus` is already the lifecycle StrEnum in
+    models.py; two things called JobStatus in one module is a trap.
+    """
+
+    job_id: UUID
+    status: Literal["QUEUED", "RUNNING", "COMPLETED", "FAILED", "DEAD_LETTERED"]
+    kind: str
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+    # Populated once the catalog row exists.
+    track_id: UUID | None = None
+    # Presigned, 15-minute TTL, and only on a COMPLETED job.
+    mp3_url: str | None = None
+
+
 # ── Dev-only ───────────────────────────────────────────────────────────────
 
 

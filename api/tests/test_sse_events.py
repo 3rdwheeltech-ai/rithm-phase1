@@ -44,11 +44,22 @@ async def test_bad_signature_is_401(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_expired_token_is_401(async_client: AsyncClient) -> None:
+async def test_expired_token_is_401_with_a_distinguishable_type(
+    async_client: AsyncClient,
+) -> None:
+    """
+    Expiry must be tellable from every other 401.
+
+    EventSource does not expose the response status on error, so a stranded
+    client probes this URL with a plain fetch purely to read it. On this exact
+    `type` it stops reconnecting and falls back to polling; on a generic 401 it
+    concludes it is logged out and sends the user to /login mid-generation.
+    """
     response = await async_client.get(
         f"/api/v1/jobs/{_JOB}/events", params={"token": _token(ttl=-1)}
     )
     assert response.status_code == 401
+    assert response.json()["type"] == "https://rithm.dev/errors/sse-token-expired"
 
 
 @pytest.mark.asyncio
@@ -58,6 +69,47 @@ async def test_token_job_mismatch_is_401(async_client: AsyncClient) -> None:
         f"/api/v1/jobs/{_JOB}/events", params={"token": _token(job_id=other)}
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_factory", ["forged", "mismatch"])
+async def test_only_expiry_gets_the_expiry_type(
+    async_client: AsyncClient, token_factory: str
+) -> None:
+    """A bad signature or a wrong job is not recoverable by polling."""
+    if token_factory == "forged":
+        body, _, _ = _token().partition(".")
+        token = f"{body}.forged"
+    else:
+        token = _token(job_id="01920000-0000-7000-8000-0000000fffff")
+
+    response = await async_client.get(
+        f"/api/v1/jobs/{_JOB}/events", params={"token": token}
+    )
+    assert response.status_code == 401
+    assert response.json()["type"] == "https://rithm.dev/errors/401"
+
+
+@pytest.mark.asyncio
+async def test_sse_token_ttl_comes_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The TTL is read from Settings, not a literal — that is what makes
+    SSE_TOKEN_TTL_SECONDS in the taskdef do anything. Default is 1800: a cold
+    start is minutes, and a 5-minute token is shorter than the wait it covers.
+    """
+    from app.config import Settings
+
+    assert Settings.model_fields["sse_token_ttl_seconds"].default == 1800
+
+    monkeypatch.setenv("SSE_TOKEN_TTL_SECONDS", "77")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().sse_token_ttl_seconds == 77
+    finally:
+        monkeypatch.delenv("SSE_TOKEN_TTL_SECONDS", raising=False)
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -115,7 +167,7 @@ async def test_stream_heartbeats_then_closes_on_terminal_event(
     assert await stream.__anext__() == (
         f'event: queued\ndata: {{"job_id": "{_JOB}"}}\n\n'
     )
-    assert await stream.__anext__() == ": keepalive\n\n"
+    assert await stream.__anext__() == 'event: keepalive\ndata: {}\n\n'
 
     failed: SSEEvent = {
         "event": "failed",
@@ -174,7 +226,7 @@ async def test_stream_unsubscribes_when_closed_early(
     )
 
     stream = generation_api._event_stream(hub, _JOB)
-    assert await stream.__anext__() == ": keepalive\n\n"
+    assert await stream.__anext__() == 'event: keepalive\ndata: {}\n\n'
     assert hub.subscriber_count(_JOB) == 1
     await stream.aclose()
     assert hub.subscriber_count(_JOB) == 0

@@ -14,7 +14,18 @@ from typing import Any
 
 
 class SSETokenError(Exception):
-    """Raised for a malformed, tampered, or expired SSE token."""
+    """Raised for a malformed or tampered SSE token."""
+
+
+class SSETokenExpired(SSETokenError):
+    """
+    The signature was good; the token is simply old.
+
+    Its own type because the HTTP layer answers it with a distinguishable
+    problem `type` — a client can recover from expiry by polling, but not from
+    a bad signature. Subclasses SSETokenError so existing `except` clauses and
+    any caller that does not care keep working unchanged.
+    """
 
 
 def _b64(raw: bytes) -> str:
@@ -55,5 +66,5 @@ def verify(token: str, key: str) -> dict[str, Any]:
         raise SSETokenError("malformed token") from exc
 
     if int(payload.get("exp", 0)) < time.time():
-        raise SSETokenError("expired")
+        raise SSETokenExpired("expired")
     return payload
