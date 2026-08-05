@@ -1,0 +1,60 @@
+# ACE-Step v1.5 inference server — the GPU half of RITHM's generation path.
+#
+# Install on rithm-worker-poc (i-0f564ea483fd76435):
+#
+#   sudo cp acestep.service /etc/systemd/system/acestep.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now acestep.service
+#   sudo systemctl status acestep.service     # expect: active (running), enabled
+#   journalctl -u acestep -f                  # model load takes ~2 min, then quiet
+#
+# This replaces the transient `systemd-run --unit=acestep-poc` invocation used during
+# Gate F. A transient unit does not survive a stop, a reboot, or an instance retirement
+# — and with the box now always-on, that was the single largest availability risk in the
+# system: ACE-Step dies, every generation fails, and nothing in the stack names the cause.
+#
+# Prove it with `sudo reboot` and a generation nobody touched the box for (Gate H2).
+
+[Unit]
+Description=ACE-Step v1.5 inference API (RITHM)
+Documentation=https://github.com/ace-step/ACE-Step
+# network-online, not just network: the server binds 0.0.0.0:8001 and the Fargate worker
+# reaches it over the private IP. Binding before the interface is configured fails silently.
+After=network-online.target
+Wants=network-online.target
+# Never give up restarting. A wedged GPU driver that needs six attempts to come back is
+# still better than a permanently dead service; rithm-acestep-box-unhealthy is what
+# escalates to a human. This lives in [Unit], not [Service] — systemd moved it in v229
+# and silently ignores the [Service] spelling.
+StartLimitIntervalSec=0
+
+[Service]
+# Type=exec, not simple: systemctl start then fails loudly if the binary is missing,
+# instead of reporting success and dying a second later.
+Type=exec
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/rithm-poc/ACE-Step-1.5
+
+Environment=ACESTEP_NO_INIT=false
+Environment=HOME=/home/ec2-user
+Environment=PATH=/home/ec2-user/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/ec2-user/.local/bin/uv run acestep-api --host 0.0.0.0 --port 8001
+
+# The 5Hz LM + DiT load takes about two minutes on an L4. Anything less than this and
+# systemd kills the process mid-load, forever, in a loop.
+TimeoutStartSec=600
+TimeoutStopSec=60
+
+# The whole point of this file. Covers the instance rebooting AND ACE-Step crashing on a
+# bad input — otherwise the product is down until a human notices.
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=acestep
+
+[Install]
+WantedBy=multi-user.target

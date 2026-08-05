@@ -1,3 +1,130 @@
 {
-  "_comment": "CloudWatch alarms — content lands on a later day (see docs/RITHM_Days1to5_CodeSpec.md)."
+  "_comment": [
+    "CloudWatch alarms for RITHM Phase 1. Applied by ops/scripts/put-alarms.sh, which",
+    "substitutes ${VAR} placeholders from the environment and calls put-metric-alarm once",
+    "per entry. put-metric-alarm is upsert-by-name, so re-running is a no-op.",
+    "",
+    "Six alarms, not fifteen. Each one names a failure that is otherwise SILENT — the",
+    "system keeps answering 200s while users get nothing. Alarms for things you would",
+    "notice anyway are how people learn to ignore their inbox.",
+    "",
+    "Shaped for the Day-5 always-on-GPU decision: rithm-worker-poc runs 24/7, so 'the GPU",
+    "has been running too long' (the parent plan's third alarm) is the steady state. What",
+    "matters instead is the box or the ACE-Step process dying."
+  ],
+
+  "alarms": [
+    {
+      "AlarmName": "rithm-generation-dlq-depth",
+      "AlarmDescription": "A generation job failed 3 SQS receives and was dead-lettered. The user's track is gone and nothing else in the system says so. Runbook: ops/runbooks/dlq-drain.md",
+      "Namespace": "AWS/SQS",
+      "MetricName": "ApproximateNumberOfMessagesVisible",
+      "Dimensions": [
+        { "Name": "QueueName", "Value": "rithm-generation-jobs-dlq" }
+      ],
+      "Statistic": "Maximum",
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "Threshold": 1,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "AlarmActions": ["${ALARM_TOPIC_ARN}"],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    },
+
+    {
+      "AlarmName": "rithm-sns-completions-dlq-depth",
+      "AlarmDescription": "THE WORST SILENT FAILURE IN THE SYSTEM. The worker finished, the track is in S3, the GPU time is spent -- and the completion never reached the API, so the user watches a spinner forever. Runbook: ops/runbooks/dlq-drain.md",
+      "Namespace": "AWS/SQS",
+      "MetricName": "ApproximateNumberOfMessagesVisible",
+      "Dimensions": [
+        { "Name": "QueueName", "Value": "rithm-sns-completions-dlq" }
+      ],
+      "Statistic": "Maximum",
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "Threshold": 1,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "notBreaching",
+      "AlarmActions": ["${ALARM_TOPIC_ARN}"],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    },
+
+    {
+      "AlarmName": "rithm-jobs-queue-stalled",
+      "AlarmDescription": "The oldest queued job has waited over 10 minutes. The single best 'generation is broken' signal: catches a dead worker, a dead ACE-Step server, and a wedged DB claim all at once. Real wall-clock is ~15s per job, so 600s means nothing is draining. Runbook: ops/runbooks/worker-stuck.md",
+      "Namespace": "AWS/SQS",
+      "MetricName": "ApproximateAgeOfOldestMessage",
+      "Dimensions": [
+        { "Name": "QueueName", "Value": "rithm-generation-jobs" }
+      ],
+      "Statistic": "Maximum",
+      "Period": 300,
+      "EvaluationPeriods": 2,
+      "Threshold": 600,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "TreatMissingData": "notBreaching",
+      "AlarmActions": ["${ALARM_TOPIC_ARN}"],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    },
+
+    {
+      "AlarmName": "rithm-acestep-box-unhealthy",
+      "AlarmDescription": "The always-on GPU box failed an EC2 status check. Every generation fails while this is true. Carries an ec2:recover action so the common case (degraded underlying host) self-heals before a human reads the email.",
+      "Namespace": "AWS/EC2",
+      "MetricName": "StatusCheckFailed",
+      "Dimensions": [
+        { "Name": "InstanceId", "Value": "${ACESTEP_INSTANCE_ID}" }
+      ],
+      "Statistic": "Maximum",
+      "Period": 60,
+      "EvaluationPeriods": 2,
+      "Threshold": 1,
+      "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+      "TreatMissingData": "missing",
+      "AlarmActions": [
+        "${ALARM_TOPIC_ARN}",
+        "arn:aws:automate:${AWS_REGION}:ec2:recover"
+      ],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    },
+
+    {
+      "AlarmName": "rithm-api-5xx-rate",
+      "AlarmDescription": "The API returned more than 5 server errors in 5 minutes. It is the only path to every feature, so this is user-visible breakage regardless of which module threw.",
+      "Namespace": "AWS/ApplicationELB",
+      "MetricName": "HTTPCode_Target_5XX_Count",
+      "Dimensions": [
+        { "Name": "TargetGroup", "Value": "${TARGET_GROUP_DIM}" },
+        { "Name": "LoadBalancer", "Value": "${LOAD_BALANCER_DIM}" }
+      ],
+      "Statistic": "Sum",
+      "Period": 300,
+      "EvaluationPeriods": 1,
+      "Threshold": 5,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "TreatMissingData": "notBreaching",
+      "AlarmActions": ["${ALARM_TOPIC_ARN}"],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    },
+
+    {
+      "AlarmName": "rithm-api-no-healthy-hosts",
+      "AlarmDescription": "Zero healthy API targets. desiredCount is pinned at 1 because SSE pub/sub is in-process, so one unhealthy host is a total outage -- not a degraded fleet. TreatMissingData is 'breaching': no data from a target group is itself the bad news.",
+      "Namespace": "AWS/ApplicationELB",
+      "MetricName": "HealthyHostCount",
+      "Dimensions": [
+        { "Name": "TargetGroup", "Value": "${TARGET_GROUP_DIM}" },
+        { "Name": "LoadBalancer", "Value": "${LOAD_BALANCER_DIM}" }
+      ],
+      "Statistic": "Minimum",
+      "Period": 60,
+      "EvaluationPeriods": 3,
+      "Threshold": 1,
+      "ComparisonOperator": "LessThanThreshold",
+      "TreatMissingData": "breaching",
+      "AlarmActions": ["${ALARM_TOPIC_ARN}"],
+      "OKActions": ["${ALARM_TOPIC_ARN}"]
+    }
+  ]
 }
