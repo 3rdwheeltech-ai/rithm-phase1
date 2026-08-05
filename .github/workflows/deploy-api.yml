@@ -21,7 +21,9 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: rithm/api
   ECS_CLUSTER: rithm-prod
-  ECS_SERVICE: rithm-api
+  # The service name is NOT the family name. ECS generated this one at create
+  # time; `update-service --service rithm-api` fails with ServiceNotFoundException.
+  ECS_SERVICE: rithm-api-service-pqqbkv2h
   TASK_FAMILY: rithm-api
   MIGRATIONS_FAMILY: rithm-api-migrations
 
