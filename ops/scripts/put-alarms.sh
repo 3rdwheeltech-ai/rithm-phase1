@@ -91,6 +91,11 @@ if grep -q '\${' <<<"$RENDERED"; then
 fi
 
 applied=0
+failed=()
+
+# One alarm failing must not abandon the other five half-applied. Partial observability
+# that reports itself is recoverable; a batch that aborted somewhere in the middle and
+# said so only in a stack trace is how you end up believing you have alarms you do not.
 while IFS= read -r alarm; do
   [[ -z "$alarm" ]] && continue
   name="$(jq -r '.AlarmName' <<<"$alarm")"
@@ -102,9 +107,26 @@ while IFS= read -r alarm; do
   fi
 
   printf '  %-34s ' "$name"
-  aws cloudwatch put-metric-alarm --region "$AWS_REGION" --cli-input-json "$alarm"
-  echo "ok"
-  applied=$((applied + 1))
+  if err="$(aws cloudwatch put-metric-alarm --region "$AWS_REGION" \
+              --cli-input-json "$alarm" 2>&1)"; then
+    echo "ok"
+    applied=$((applied + 1))
+  else
+    echo "FAILED"
+    echo "      ${err##*$'\n'}" >&2
+    failed+=("$name")
+
+    # The one failure worth naming explicitly. An alarm carrying
+    # arn:aws:automate:<region>:ec2:recover needs the CloudWatch Events
+    # service-linked role, which is created on first use -- and creating it needs an
+    # IAM permission the ops identity deliberately does not have. It is a one-time,
+    # account-wide fix, not something to work around by dropping the recover action.
+    if [[ "$err" == *CreateServiceLinkedRole* ]]; then
+      echo "      -> one-time account fix, then re-run this script:" >&2
+      echo "         aws iam create-service-linked-role \\" >&2
+      echo "           --aws-service-name events.amazonaws.com" >&2
+    fi
+  fi
 done <<<"$RENDERED"
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -128,3 +150,9 @@ Prove one alarm actually reaches a human before calling this done:
   aws cloudwatch set-alarm-state --alarm-name rithm-sns-completions-dlq-depth \
     --state-value ALARM --state-reason "synthetic launch check"
 EOF
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+  echo
+  echo "INCOMPLETE: ${#failed[@]} alarm(s) did not apply: ${failed[*]}" >&2
+  exit 1
+fi
