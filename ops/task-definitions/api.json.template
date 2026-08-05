@@ -71,8 +71,20 @@
         {
           "name": "ESTIMATED_COLD_START_SECONDS",
           "value": "<ESTIMATED_COLD_START_SECONDS>"
-        },
-        { "name": "RITHM_DEV_ENDPOINTS", "value": "1" }
+        }
+      ],
+      "_comment_dev_endpoints": [
+        "RITHM_DEV_ENDPOINTS is deliberately ABSENT, not set to '0'.",
+        "It mounts POST /internal/dev/enqueue-test-job, which takes no auth and skips",
+        "the rate limiter by design (generation/api.py:452) so gates could be driven",
+        "repeatedly. The route is kept off CloudFront, but the ALB DNS is public --",
+        "so with it on, anyone who finds the ALB can spend GPU budget.",
+        "Removed on Day 5. The guard is at router registration (main.py:146), so",
+        "absence genuinely unmounts the route: it 404s rather than 403s.",
+        "",
+        "NOTE: deploy-api.yml describe-and-patches the LIVE task definition and does",
+        "not render this template, so editing this file changes nothing in production.",
+        "The real removal is a new rithm-api revision -- day-5-spec.md A4."
       ],
       "secrets": [
         {
