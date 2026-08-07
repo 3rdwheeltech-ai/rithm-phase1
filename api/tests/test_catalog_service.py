@@ -149,6 +149,40 @@ async def test_denormalizes_indexed_columns_out_of_params() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lyrics_land_in_their_own_column() -> None:
+    """
+    catalog.tracks.lyrics has existed since the baseline migration and TrackRow
+    already reads it — before user lyrics there was nothing to put in it. A
+    track whose words live only in the params blob is unqueryable.
+    """
+    session = _inserting_session()
+    written = "[verse]\nNeon on the wet street\n"
+    await CatalogService().create_track_in_txn(
+        session,  # type: ignore[arg-type]
+        user_id=_USER,
+        source_job_id=_JOB,
+        kind="generate",
+        prompt="a warm loop",
+        params={**_PARAMS, "vocal": True, "lyrics": written},
+        s3_wav_key="tracks/u/j/master.wav",
+        s3_mp3_key="tracks/u/j/audio.mp3",
+        waveform_hash="a" * 64,
+    )
+
+    track_sql, params = session.executed[0]
+    assert "lyrics" in track_sql
+    assert params["lyrics"] == written
+
+
+@pytest.mark.asyncio
+async def test_lyrics_default_to_null_when_the_model_wrote_them() -> None:
+    session = _inserting_session()
+    await _create(session)
+
+    assert session.executed[0][1]["lyrics"] is None
+
+
+@pytest.mark.asyncio
 async def test_params_are_bound_as_jsonb_not_text() -> None:
     session = _inserting_session()
     await _create(session)

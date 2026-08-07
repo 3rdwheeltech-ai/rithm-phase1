@@ -77,11 +77,12 @@ class CatalogService:
             f"""
             INSERT INTO {TRACKS_TABLE}
                 (id, user_id, source_job_id, genre, mood, bpm, vocal,
-                 length_seconds, prompt, params, s3_wav_key, s3_mp3_key,
-                 waveform_hash)
+                 length_seconds, prompt, lyrics, params, s3_wav_key,
+                 s3_mp3_key, waveform_hash)
             VALUES
                 (:id, :user_id, :source_job_id, :genre, :mood, :bpm,
-                 :vocal, :length_seconds, :prompt, CAST(:params AS JSONB),
+                 :vocal, :length_seconds, :prompt, :lyrics,
+                 CAST(:params AS JSONB),
                  :s3_wav_key, :s3_mp3_key, :waveform_hash)
             ON CONFLICT (source_job_id) DO NOTHING
             RETURNING id
@@ -102,6 +103,11 @@ class CatalogService:
                     "vocal": params.get("vocal", True),
                     "length_seconds": params.get("length_seconds"),
                     "prompt": prompt,
+                    # The column has existed since the baseline migration and
+                    # TrackRow already reads it; before user lyrics there was
+                    # simply nothing to put in it. NULL means the model wrote
+                    # the words (or there are none) — same as the API's None.
+                    "lyrics": params.get("lyrics"),
                     "params": json.dumps(params),
                     "s3_wav_key": s3_wav_key,
                     "s3_mp3_key": s3_mp3_key,

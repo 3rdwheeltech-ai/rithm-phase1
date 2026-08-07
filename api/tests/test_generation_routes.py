@@ -23,6 +23,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.modules.generation import service as generation_service_module
 from app.modules.generation.interfaces import ParentTrack
+from app.modules.generation.schemas import LYRICS_MAX_LENGTH
 from app.modules.generation.service import generation_service
 from app.shared.auth import require_user
 from tests.conftest import FakeSession
@@ -238,6 +239,80 @@ async def test_inverted_bpm_range_is_rejected(
     client: AsyncClient, sqs: list[dict[str, Any]]
 ) -> None:
     body = {**GENERATE_BODY, "bpm_min": 120, "bpm_max": 80}
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_lyrics_reach_the_envelope_verbatim(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """The worker passes this straight to ACE-Step, so nothing may reshape it."""
+    written = "[verse]\nNeon on the wet street\n\n[chorus]\nDrive\n"
+    body = {**GENERATE_BODY, "vocal": True, "lyrics": written}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["lyrics"] == written
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_lyrics_default_to_none(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """None is the instruction "write your own words" — it must survive as None."""
+    response = await client.post("/api/v1/tracks/generate", json=GENERATE_BODY)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["lyrics"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_blank_lyrics_normalise_to_none(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    A box the user tabbed through means "write your own words", not "sing
+    these three spaces" — and whitespace would otherwise reach the model.
+    """
+    body = {**GENERATE_BODY, "vocal": True, "lyrics": "   \n\t "}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["lyrics"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_lyrics_with_an_instrumental_are_rejected(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    Both occupy ACE-Step's single `lyrics` field, so one would have to silently
+    win. A 422 at the edge means nobody downstream has to invent a precedence.
+    """
+    body = {**GENERATE_BODY, "vocal": False, "lyrics": "sing this"}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_overlong_lyrics_are_rejected(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    body = {**GENERATE_BODY, "vocal": True, "lyrics": "la " * LYRICS_MAX_LENGTH}
+
     response = await client.post("/api/v1/tracks/generate", json=body)
 
     assert response.status_code == 422

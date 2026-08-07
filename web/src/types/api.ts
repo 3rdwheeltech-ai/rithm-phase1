@@ -43,6 +43,7 @@ export const BPM_MIN = 20;
 export const BPM_MAX = 300;
 export const MAX_INSTRUMENTS = 10;
 export const PROMPT_MAX_LENGTH = 2000;
+export const LYRICS_MAX_LENGTH = 3000;
 export const DELTA_COMMAND_MAX_LENGTH = 500;
 
 export interface GenerateRequest {
@@ -54,6 +55,12 @@ export interface GenerateRequest {
   instruments: string[];
   vocal: boolean;
   length_seconds: number;
+  /**
+   * The user's own words, or null to let the model write them. Must be null
+   * when `vocal` is false — the API returns a 422 for that pair, because
+   * ACE-Step expresses "instrumental" through this same field.
+   */
+  lyrics?: string | null;
 }
 
 export type RefinementMode = "fresh" | "audio_reference";

@@ -81,6 +81,9 @@ def test_generate_passes_the_exact_kwarg_set() -> None:
             "vocal": False,
             "length_s": 30,
             "seed": 1839201773,
+            # Absent from params means "no lyrics", not "key missing" — the
+            # adapter has to receive the None rather than infer it.
+            "lyrics": None,
         }
     ]
     # bpm_min/bpm_max are carried in the envelope for fidelity but must never

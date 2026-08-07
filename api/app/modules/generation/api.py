@@ -188,6 +188,7 @@ async def generate_track(
         instruments=body.instruments,
         vocal=body.vocal,
         length_seconds=body.length_seconds,
+        lyrics=body.lyrics,
         seed=new_seed(),
     )
     return await _submit(user_id=user_id, kind="generate", params=params)

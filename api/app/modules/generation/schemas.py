@@ -23,6 +23,11 @@ from app.modules.generation.models import JobKind
 # 2000-character prompt through it.
 Instrument = Annotated[str, Field(min_length=1, max_length=40)]
 
+# ACE-Step publishes no documented lyric cap, so this bound is ours: comfortably
+# above a long song, well below "the prompt field with the guard rails off".
+# Mirrored in web/src/types/api.ts and pinned there, the same way prompt's 2000 is.
+LYRICS_MAX_LENGTH = 3000
+
 # Enum lists must match the catalog.tracks CHECKs; the Day-4 UI dropdowns
 # read from these.
 
@@ -75,6 +80,10 @@ class GenerationParams(BaseModel):
     instruments: list[Instrument] = Field(default_factory=list, max_length=10)
     vocal: bool = True
     length_seconds: int = Field(default=90, ge=10, le=180)
+    # The user's own words, or None to let ACE-Step's LM planning phase write
+    # them. Never both this and vocal=False — GenerateRequest rejects that pair
+    # at the edge, and the worker forces [Instrumental] if one ever gets through.
+    lyrics: str | None = Field(default=None, max_length=LYRICS_MAX_LENGTH)
     # Minted API-side at submit, never by the worker, and never null on the
     # wire from Day 3 onward — it is what makes a generation reproducible and
     # what makes "a variation is the same params with a different seed"
@@ -118,6 +127,7 @@ class GenerateRequest(BaseModel):
     instruments: list[Instrument] = Field(default_factory=list, max_length=10)
     vocal: bool = True
     length_seconds: int = Field(default=90, ge=10, le=180)
+    lyrics: str | None = Field(default=None, max_length=LYRICS_MAX_LENGTH)
 
     @model_validator(mode="after")
     def _bpm_range_is_ordered(self) -> Self:
@@ -127,6 +137,28 @@ class GenerateRequest(BaseModel):
             and self.bpm_min > self.bpm_max
         ):
             raise ValueError("bpm_min must be less than or equal to bpm_max")
+        return self
+
+    @model_validator(mode="after")
+    def _lyrics_need_vocals(self) -> Self:
+        """
+        Normalise blank lyrics away, then refuse the one contradictory pair.
+
+        Whitespace has to collapse to None rather than pass through: ACE-Step
+        reads an empty lyrics field as "write your own words", and a box the
+        user tabbed through should mean that, not "sing these three spaces".
+
+        lyrics + vocal=False is unrepresentable downstream — the worker's
+        [Instrumental] token IS the lyrics field, so one of the two would have
+        to silently win. A 422 here means nobody has to guess which.
+        """
+        if self.lyrics is not None and not self.lyrics.strip():
+            self.lyrics = None
+        if self.lyrics is not None and not self.vocal:
+            raise ValueError(
+                "lyrics cannot be supplied with vocal=false — an instrumental "
+                "track has no words to sing"
+            )
         return self
 
 

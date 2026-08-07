@@ -36,9 +36,11 @@ Two consequences worth stating out loud, because they undo Day-3 assumptions:
     anyone reintroducing an in-process path without revisiting the image.
 
 The GMC controls collapse into ACE-Step's single free-text `caption` — the
-server takes no discrete genre/mood/instrument fields — and `vocal=False` is
-expressed as the literal lyric `[Instrumental]`. Both are PoC findings, both
-are pinned by tests, and neither is a detail to tidy.
+server takes no discrete genre/mood/instrument fields — and the `lyrics` field
+carries three states rather than one: `[Instrumental]` for `vocal=False`, the
+user's own words when they wrote some, and an empty string to let the model
+write them. Both are PoC findings, both are pinned by tests, and neither is a
+detail to tidy.
 """
 
 import json
@@ -121,6 +123,7 @@ class MusicModel(Protocol):
         vocal: bool,
         length_s: int,
         seed: int,
+        lyrics: str | None,
     ) -> Path: ...
 
 
@@ -154,15 +157,24 @@ def _compose_caption(
     return ", ".join(part for part in parts if part)
 
 
-def _lyrics_for(vocal: bool) -> str:
+def _lyrics_for(vocal: bool, lyrics: str | None = None) -> str:
     """
     ACE-Step's vocal switch is the lyrics field, not a boolean.
 
-    `[Instrumental]` suppresses vocals. An empty string leaves the LM planning
-    phase free to write its own lyrics, which is what we want for a vocal track
-    — Phase 1 has no lyrics input, so there is nothing else to send.
+    Three states, one field. `[Instrumental]` suppresses vocals. An empty
+    string leaves the LM planning phase free to write its own words. Anything
+    else is the user's own lyrics, passed through verbatim — ACE-Step parses
+    its own `[verse]`/`[chorus]` structure tags, so we neither add nor strip
+    them.
+
+    `vocal=False` wins over supplied lyrics unconditionally. The API rejects
+    that pair with a 422 (GenerateRequest._lyrics_need_vocals) so it should
+    never arrive, but the two cannot both occupy this field and silently
+    singing over an instrumental request is the worse failure of the two.
     """
-    return _INSTRUMENTAL_LYRICS if not vocal else ""
+    if not vocal:
+        return _INSTRUMENTAL_LYRICS
+    return lyrics or ""
 
 
 # Decoded JSON is Any all the way down, and pyright runs strict here. These two
@@ -312,12 +324,13 @@ class AceStepHttpModel:
         vocal: bool,
         length_s: int,
         seed: int,
+        lyrics: str | None = None,
     ) -> Path:
         caption = _compose_caption(prompt, genre, mood, instruments)
         payload: dict[str, Any] = {
             "task_type": self._task_type,
             "caption": caption,
-            "lyrics": _lyrics_for(vocal),
+            "lyrics": _lyrics_for(vocal, lyrics),
             "duration": length_s,
             "batch_size": 1,
         }
@@ -333,6 +346,10 @@ class AceStepHttpModel:
             length_s=length_s,
             caption=caption,
             task_type=self._task_type,
+            # The length only. User lyrics are user content and do not belong
+            # in a log aggregator, but "were there any, and roughly how much"
+            # is the first question when a vocal track comes back wrong.
+            lyrics_chars=len(payload["lyrics"]),
             # Whether OUR seed reached the model at all. When false the server
             # picks its own, and the only record of it is the seed we log on
             # completion — see _reported_seed.
@@ -597,6 +614,7 @@ def run_inference(model: MusicModel | None, job: dict[str, Any]) -> Path:
         vocal=params.get("vocal", True),
         length_s=length,
         seed=int(params["seed"]),
+        lyrics=params.get("lyrics"),
     )
 
     # Verify, do not trust. The model server can report success and produce

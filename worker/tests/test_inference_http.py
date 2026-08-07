@@ -134,10 +134,10 @@ def test_release_task_payload_matches_the_poc_contract() -> None:
     }
 
 
-def test_vocal_tracks_send_empty_lyrics() -> None:
+def test_vocal_tracks_without_lyrics_send_an_empty_string() -> None:
     """
-    Phase 1 has no lyrics input, so a vocal track sends nothing and lets the
-    LM planning phase write its own. Only `[Instrumental]` is a real token.
+    An empty lyrics field is the instruction "write your own words". It is a
+    third state, not a missing value — do not let anyone "fix" it to null.
     """
     seen: list[httpx.Request] = []
 
@@ -145,6 +145,46 @@ def test_vocal_tracks_send_empty_lyrics() -> None:
 
     body = json.loads(seen[0].content)
     assert body["lyrics"] == ""
+
+
+def test_user_lyrics_reach_the_server_verbatim() -> None:
+    """
+    ACE-Step parses its own structure tags, so the text goes over untouched —
+    no stripping, no normalising, no wrapping.
+    """
+    seen: list[httpx.Request] = []
+    written = "[verse]\nNeon on the wet street\n\n[chorus]\nDrive\n"
+
+    _generate(_model(_succeeding_handler(seen)), vocal=True, lyrics=written)
+
+    body = json.loads(seen[0].content)
+    assert body["lyrics"] == written
+
+
+def test_lyrics_do_not_leak_into_the_caption() -> None:
+    """
+    Conditioning the model on the same words twice is the failure mode the
+    caption's docstring warns about. Lyrics have their own field.
+    """
+    seen: list[httpx.Request] = []
+
+    _generate(_model(_succeeding_handler(seen)), vocal=True, lyrics="secret words")
+
+    body = json.loads(seen[0].content)
+    assert body["caption"] == "warm lo-fi piano loop, Lo-Fi, Calm, piano"
+
+
+def test_instrumental_beats_supplied_lyrics() -> None:
+    """
+    The API rejects this pair with a 422, so it should never arrive — but the
+    two cannot share one field, and silently singing over a request for an
+    instrumental is the worse of the two ways to lose.
+    """
+    seen: list[httpx.Request] = []
+
+    _generate(_model(_succeeding_handler(seen)), vocal=False, lyrics="sing this")
+
+    assert json.loads(seen[0].content)["lyrics"] == "[Instrumental]"
 
 
 def test_bpm_is_omitted_when_absent() -> None:
