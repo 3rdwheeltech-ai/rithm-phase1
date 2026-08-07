@@ -2,10 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Design tokens ──────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   RITHM — Liquid Glass
+   ───────────────────────────────────────────────────────────────────────────
+   Apple's material, not 2020 glassmorphism. Four things separate them:
+
+     1. It refracts.  The backdrop bends at the rim (see lib/lensFilter.ts).
+     2. It is lit.    The rim highlight tracks the pointer (lib/useSpecular.ts).
+     3. Corners nest. Inner radius = outer radius − padding.
+     4. It is chrome. Glass goes on navigation and controls. Content sits on an
+                      opaque plane underneath, where text stays legible and the
+                      compositor is not asked to blur thirty cards at once.
+
+   Four tiers, in descending cost:
+     .lg-lens     refracting. Navigation and the one big box a route is about;
+                  never more than four on screen at once, which is the number
+                  that matters — each one is a full-buffer filter pass per
+                  composite, and they are per-route, not per-list-item.
+     .lg-regular  blur + specular. Buttons, pills, popovers.
+     .lg-thin     minimal tint. Chips, badges, tooltips.
+     .surface     opaque. Everything that carries text.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 @layer base {
   :root {
-    --brand-rgb: 108, 92, 231;
+    /* ── Control Room palette. Triples, so Tailwind's `/opacity` works. ───── */
+    --room: 7 9 12;
+    --room-raised: 12 16 20;
+    --room-sunken: 5 7 8;
+
+    --signal: 52 227 200;
+    --signal-dim: 31 168 148;
+    --signal-bright: 125 243 226;
+    /* Ink for text sitting *on* signal. Teal is bright; white would fail AA. */
+    --on-signal: 4 20 17;
+
+    --amber: 255 180 84;
+    --danger: 255 107 107;
+    --ink: 236 239 242;
+
+    --bg: #07090c;
+
+    /* ── Glass material ──────────────────────────────────────────────────── */
+    /*
+      The default tint is a white wash, which is what a small control wants —
+      a chip or a button reads as a lit sliver of glass. The lens tier
+      overrides this to a dark frost; see `.lg-lens` below.
+    */
+    --glass-tint: 255 255 255;
+    --glass-alpha: 0.06;
+    --glass-blur: 24px;
+    /* Saturation is what keeps the room's teal and amber alive through the
+       glass. Below ~1.6 the backdrop goes grey and the material reads as
+       plastic; above ~2 the poles start to posterise. */
+    --glass-sat: 190%;
+
+    /* Specular hotspot, in element-relative %. Overwritten by useSpecular. */
+    --sx: 50%;
+    --sy: -10%;
+
+    /* ── Concentric radii. Children read `calc(var(--r) - var(--pad))`. ───── */
+    --r: 20px;
+    --pad: 8px;
+
+    /* ── The room's pulse. Bound to playback by StudioField. ──────────────── */
+    --bpm: 90;
+    --beat-state: paused;
+
+    color-scheme: dark;
   }
 
   html {
@@ -13,98 +77,287 @@
   }
 
   body {
-    @apply min-h-full bg-void font-sans text-ink antialiased;
+    @apply min-h-full bg-void font-sans text-base text-ink antialiased;
     overflow-x: hidden;
   }
 
   /*
-    Ambient colour field — three overlapping blobs that the glass card blurs
-    and refracts. Deliberately asymmetric for organic depth.
+    Was a flex centering box built for the auth pages, which forced the signed-in
+    shell to escape it with `position: fixed`. Now it is an ordinary block and
+    each route owns its own layout.
   */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background:
-      radial-gradient(ellipse 75% 65% at 15% 8%, rgba(72, 52, 210, 0.38) 0%, transparent 60%),
-      radial-gradient(ellipse 55% 70% at 82% 88%, rgba(28, 55, 215, 0.24) 0%, transparent 55%),
-      radial-gradient(ellipse 50% 55% at 62% 28%, rgba(145, 48, 205, 0.2) 0%, transparent 52%);
-    pointer-events: none;
-    z-index: 0;
-  }
-
   #root {
     position: relative;
     z-index: 1;
+    display: block;
+    min-height: 100dvh;
+  }
+
+  /* Centering for the routes that genuinely want it (login, signup). */
+  .auth-shell {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
     min-height: 100dvh;
-    padding: 32px 20px;
+    padding: clamp(20px, 5vw, 48px) clamp(16px, 5vw, 32px);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--signal));
+    outline-offset: 2px;
+  }
+
+  /* Native controls should not render as light widgets on a dark console. */
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  ::selection {
+    background: rgb(var(--signal) / 0.3);
   }
 }
 
-/* ── Glass primitives ───────────────────────────────────────────────────── */
+/* ═══ Material tiers ═══════════════════════════════════════════════════════ */
 @layer components {
-  /* Frosted glass card with specular rim + internal light gradient */
-  .glass-card {
-    @apply relative w-full max-w-[400px] overflow-hidden rounded-card border border-white/10;
-    background: rgba(10, 10, 20, 0.42);
-    backdrop-filter: blur(56px) saturate(190%) brightness(1.06);
-    -webkit-backdrop-filter: blur(56px) saturate(190%) brightness(1.06);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.1),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.22),
-      0 4px 6px rgba(0, 0, 0, 0.22),
-      0 14px 32px rgba(0, 0, 0, 0.38),
-      0 44px 88px rgba(0, 0, 0, 0.42),
-      0 0 130px rgba(var(--brand-rgb), 0.09);
+  /*
+    Legacy names are folded into the tier selectors rather than `@apply`d: an
+    `@apply` copies a class's own declarations but not its `::before`, which
+    would leave the aliases without the rim that makes the material work.
+  */
+  .lg-lens,
+  .lg-regular,
+  .lg-thin,
+  .glass-card,
+  .quick-surface,
+  .glass-panel,
+  .glass-btn,
+  .btn-social {
+    position: relative;
+    border-radius: var(--r);
+    /*
+      The internal light gradient lives in the element's own background rather
+      than a pseudo-element, so the only pseudo is the rim — which must paint
+      above content, and does.
+    */
+    background:
+      linear-gradient(
+        168deg,
+        rgb(255 255 255 / var(--glass-sheen, 0.07)) 0%,
+        rgb(255 255 255 / 0) 46%,
+        rgb(0 0 0 / 0.1) 100%
+      ),
+      rgb(var(--glass-tint) / var(--glass-alpha));
   }
 
-  /* Bright specular line on the top rim, fading at both ends */
-  .glass-card::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 8%;
-    right: 8%;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.2) 15%,
-      rgba(255, 255, 255, 0.58) 36%,
-      rgba(255, 255, 255, 0.7) 50%,
-      rgba(255, 255, 255, 0.58) 64%,
-      rgba(255, 255, 255, 0.2) 85%,
-      transparent 100%
-    );
-    pointer-events: none;
-  }
-
-  /* Internal reflection — lighter near top-left, subtly darker at bottom */
-  .glass-card::after {
+  /* The lit rim. A 1px border drawn as a gradient, brightest near the pointer. */
+  .lg-lens::before,
+  .lg-regular::before,
+  .lg-thin::before,
+  .glass-card::before,
+  .quick-surface::before,
+  .glass-panel::before,
+  .glass-btn::before,
+  .btn-social::before {
     content: "";
     position: absolute;
     inset: 0;
+    z-index: 2;
     border-radius: inherit;
-    background: linear-gradient(
-      165deg,
-      rgba(255, 255, 255, 0.045) 0%,
-      transparent 45%,
-      rgba(0, 0, 0, 0.06) 100%
+    padding: 1px;
+    background: radial-gradient(
+      130% 130% at var(--sx) var(--sy),
+      rgb(255 255 255 / 0.8) 0%,
+      rgb(255 255 255 / 0.3) 22%,
+      rgb(255 255 255 / 0.1) 48%,
+      rgb(255 255 255 / 0.16) 100%
     );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
     pointer-events: none;
+    transition: background 0.25s ease-out;
   }
 
-  /* Recessed glass input */
-  .glass-input {
-    @apply w-full rounded-el border border-white/10 px-3.5 py-3 text-[14.5px] font-normal text-ink outline-none transition duration-150;
-    background: rgba(255, 255, 255, 0.04);
+  .lg-lens,
+  .lg-regular,
+  .glass-card,
+  .quick-surface,
+  .glass-panel,
+  .glass-btn {
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
     box-shadow:
-      inset 0 1px 4px rgba(0, 0, 0, 0.42),
-      inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+      inset 0 1px 0 rgb(255 255 255 / 0.07),
+      inset 0 -1px 0 rgb(0 0 0 / 0.28),
+      0 8px 20px -8px rgb(0 0 0 / 0.55),
+      0 28px 60px -24px rgb(0 0 0 / 0.65);
+  }
+
+  /*
+    Smoked glass, not a white wash.
+
+    Two numbers here do the work, and they pull against each other on purpose:
+
+      --glass-alpha 0.4 over a BLACK tint. A translucent white film brightens
+      whatever is behind it and flattens it; a dark tint darkens the backdrop
+      while leaving its colour, which is what a real smoked panel does. It is
+      also what lets `.quick-surface` stop being near-opaque — it used to need
+      `room-raised / 0.93` because the field's teal and amber read straight
+      through it and the prompt lost its contrast. The frost solves that
+      honestly, so the box can go back to being glass.
+
+      --glass-blur 12px, down from 28px. Blur and refraction compete: blur
+      destroys exactly the detail the displacement map bends. At 28px there is
+      nothing left in the backdrop to refract and the lens pass is wasted
+      cost. Halving it is what makes the room's 22px dot matrix survive as far
+      as the rim, where it visibly warps. That warp is the whole effect.
+  */
+  .lg-lens,
+  .glass-card,
+  .quick-surface {
+    --glass-tint: 0 0 0;
+    --glass-alpha: 0.4;
+    --glass-blur: 12px;
+    /* The panel is darker now, so the light falling across its top edge has to
+       carry further to still read as a lit sheet rather than a grey rectangle. */
+    --glass-sheen: 0.1;
+  }
+
+  /*
+    Refraction, only where the engine can run it. Safari and Firefox drop any
+    `backdrop-filter` containing a url(), so they keep the blur recipe above and
+    lean on the specular rim instead — which is why the rim carries real weight
+    rather than being a hairline.
+  */
+  html.lens-ok [data-lens] {
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) var(--lens);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) var(--lens);
+  }
+
+  /*
+    A tier states its WHOLE material, and never inherits half of one.
+
+    Custom properties cascade, so every one of these that a tier leaves unsaid is
+    silently supplied by whatever panel it happens to sit inside. Both failures
+    are real and both were shipped for a moment: leaving `--glass-tint` out made
+    the Player's transport buttons 7% black on a dark panel (invisible), and
+    leaving `--glass-alpha` out made the Vocals segmented control inherit the
+    generate box's 0.68 frost and render as a solid white slab.
+
+    So: tint, alpha and blur together, on every tier that wants the white wash.
+    The per-tier rules that follow may still override any of them.
+  */
+  .lg-regular,
+  .lg-thin,
+  .glass-btn,
+  .btn-social,
+  .glass-panel {
+    --glass-tint: 255 255 255;
+    --glass-alpha: 0.06;
+    --glass-blur: 24px;
+    --glass-sheen: 0.07;
+  }
+
+  .lg-thin,
+  .btn-social {
+    --glass-alpha: 0.05;
+    backdrop-filter: blur(12px) saturate(150%);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  }
+
+  /*
+    The content plane. No backdrop-filter anywhere — this is what most cards and
+    panels should be, and it is why the Library grid can hold thirty of them.
+  */
+  .surface {
+    position: relative;
+    border-radius: var(--r);
+    background: rgb(var(--room-raised));
+    border: 1px solid rgb(255 255 255 / 0.07);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.04),
+      0 8px 24px -14px rgb(0 0 0 / 0.8);
+  }
+
+  .surface-hover {
+    transition:
+      transform 0.2s cubic-bezier(0.32, 0.72, 0, 1),
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .surface-hover:hover {
+    transform: translateY(-2px);
+    border-color: rgb(255 255 255 / 0.12);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.06),
+      0 16px 32px -16px rgb(0 0 0 / 0.9);
+  }
+
+  /* A recessed well: inputs, progress tracks, anything cut into the surface. */
+  .well {
+    background: rgb(var(--room-sunken) / 0.72);
+    box-shadow:
+      inset 0 1px 3px rgb(0 0 0 / 0.5),
+      inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  }
+
+  /* Corners that nest on a shared centre, the way Apple draws them. */
+  .r-inner {
+    border-radius: calc(var(--r) - var(--pad));
+  }
+}
+
+/* ═══ Legacy surface shapes ════════════════════════════════════════════════
+   The material comes from the tier selectors above; these only carry the size
+   and radius each legacy name implies. Migrated component by component. */
+@layer components {
+  .glass-card {
+    --r: 24px;
+    @apply w-full max-w-[400px];
+  }
+
+  /*
+    The generate box sits directly over the brightest part of the field. It used
+    to answer that with a near-opaque interior (`room-raised / 0.93`), which won
+    the contrast argument by giving up on being glass. The dark frost on the lens
+    tier wins the same argument honestly, so the only thing left to say here is
+    that this box carries a page-sized radius.
+  */
+  .quick-surface {
+    --r: 24px;
+    /*
+      A heavier frost than the rest of the lens tier, because this is the only
+      lensed panel big enough to span two of the field's colour poles at once.
+      The nav chrome is narrow, so it crosses one pole and reads as a tint; this
+      box is ~900px wide and caught the teal corner AND the amber pole, which
+      landed as two stains behind the prompt.
+
+      Deepening the tint rather than dropping --glass-sat is deliberate: it puts
+      the colour back where it belongs (the rim) without desaturating the room
+      seen through the rest of the app's glass. The dot matrix and the beat still
+      come through — there is just no longer a wash competing with the text.
+    */
+    --glass-alpha: 0.68;
+    --glass-blur: 20px;
+  }
+}
+
+/* ═══ Controls ═════════════════════════════════════════════════════════════ */
+@layer components {
+  .glass-input {
+    @apply w-full rounded-el border border-white/10 px-3.5 py-3 text-base font-normal text-ink outline-none transition duration-150;
+    background: rgb(var(--room-sunken) / 0.72);
+    box-shadow:
+      inset 0 1px 3px rgb(0 0 0 / 0.5),
+      inset 0 0 0 1px rgb(255 255 255 / 0.04);
   }
 
   .glass-input::placeholder {
@@ -112,36 +365,38 @@
   }
 
   .glass-input:focus {
-    border-color: rgba(var(--brand-rgb), 0.52);
-    background: rgba(255, 255, 255, 0.065);
+    border-color: rgb(var(--signal) / 0.55);
     box-shadow:
-      inset 0 1px 4px rgba(0, 0, 0, 0.3),
-      0 0 0 3.5px rgba(var(--brand-rgb), 0.15);
+      inset 0 1px 3px rgb(0 0 0 / 0.4),
+      0 0 0 3.5px rgb(var(--signal) / 0.16);
   }
 
-  /* Primary button — brand gradient with bloom */
+  /*
+    Primary action. Dark ink on bright signal — white on this teal fails AA, and
+    the dark-on-bright pairing is what reads as a lit console key anyway.
+  */
   .btn-primary {
-    @apply flex w-full items-center justify-center rounded-el px-4 py-3 text-[14.5px] font-semibold text-white/95 transition-all duration-150;
-    background: linear-gradient(158deg, rgba(122, 104, 252, 0.92) 0%, rgba(90, 66, 218, 0.96) 100%);
-    border: 1px solid rgba(162, 150, 255, 0.24);
+    @apply flex w-full items-center justify-center rounded-el px-4 py-3 text-base font-semibold transition-all duration-150;
+    color: rgb(var(--on-signal));
+    background: linear-gradient(158deg, rgb(var(--signal)) 0%, rgb(var(--signal-dim)) 100%);
+    border: 1px solid rgb(var(--signal-bright) / 0.4);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.15),
-      0 4px 16px rgba(var(--brand-rgb), 0.42),
-      0 1px 4px rgba(0, 0, 0, 0.3);
+      inset 0 1px 0 rgb(255 255 255 / 0.3),
+      0 4px 16px rgb(var(--signal) / 0.28),
+      0 1px 4px rgb(0 0 0 / 0.4);
   }
 
   .btn-primary:hover:not(:disabled) {
     transform: translateY(-1px);
-    opacity: 0.92;
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 6px 24px rgba(var(--brand-rgb), 0.52),
-      0 2px 8px rgba(0, 0, 0, 0.3);
+      inset 0 1px 0 rgb(255 255 255 / 0.36),
+      0 6px 22px rgb(var(--signal) / 0.38),
+      0 2px 8px rgb(0 0 0 / 0.4);
   }
 
   .btn-primary:active:not(:disabled) {
     transform: translateY(0.5px);
-    opacity: 0.85;
+    filter: brightness(0.94);
   }
 
   .btn-primary:disabled {
@@ -149,53 +404,37 @@
     transform: none;
   }
 
-  /* Secondary / ghost button */
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-[10px] border border-white/10 px-[22px] py-2.5 text-[13.5px] font-medium text-ink-muted transition-colors duration-150;
-    background: rgba(255, 255, 255, 0.055);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+    @apply inline-flex items-center justify-center rounded-control border border-white/10 px-[22px] py-2.5 text-sm font-medium text-ink-muted transition-colors duration-150;
+    background: rgb(255 255 255 / 0.055);
   }
 
   .btn-secondary:hover {
     @apply text-ink;
-    background: rgba(255, 255, 255, 0.09);
+    background: rgb(255 255 255 / 0.09);
   }
 
-  /* Brand wordmark */
-  .wordmark {
-    @apply block text-[11.5px] font-bold uppercase tracking-wordmark text-white/90;
-  }
-
-  /* Dummy social sign-in button (icon-only, ghost glass) */
   .btn-social {
-    @apply flex h-11 flex-1 items-center justify-center rounded-el border border-white/10 transition-colors duration-150;
-    background: rgba(255, 255, 255, 0.04);
+    @apply flex h-11 flex-1 items-center justify-center rounded-el transition-colors duration-150;
   }
 
   .btn-social:hover {
-    background: rgba(255, 255, 255, 0.085);
+    --glass-alpha: 0.09;
   }
 
-  /*
-    Liquid-glass button — translucent frosted surface with a little depth
-    (specular top rim + recessed bottom). Radius is left to utility classes so
-    it works for both pills and circles. Pair with .glass-btn-ring for an accent
-    outline, or wrap in .ai-frame-btn for the breathing AI outline.
-  */
+  /* Liquid-glass button. Radius left to utilities so it serves pills and circles. */
   .glass-btn {
-    @apply relative inline-flex items-center justify-center text-white transition-all duration-150;
-    background: rgba(255, 255, 255, 0.07);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    @apply inline-flex items-center justify-center text-ink transition-all duration-150;
+    --glass-alpha: 0.07;
+    --glass-blur: 20px;
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
-      inset 0 -2px 6px rgba(0, 0, 0, 0.28),
-      0 4px 14px rgba(0, 0, 0, 0.3);
+      inset 0 1px 0 rgb(255 255 255 / 0.16),
+      inset 0 -2px 6px rgb(0 0 0 / 0.3),
+      0 4px 14px -4px rgb(0 0 0 / 0.5);
   }
 
   .glass-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.11);
+    --glass-alpha: 0.11;
     transform: translateY(-1px);
   }
 
@@ -208,83 +447,150 @@
     transform: none;
   }
 
-  /* Accent ring — only the outline carries the brand colour (play button) */
+  /* Accent ring — the outline carries the signal colour (transport play button). */
   .glass-btn-ring {
-    border-color: rgba(var(--brand-rgb), 0.7);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
-      inset 0 0 12px rgba(var(--brand-rgb), 0.22),
-      0 0 0 1px rgba(var(--brand-rgb), 0.32),
-      0 4px 16px rgba(var(--brand-rgb), 0.26);
+      inset 0 1px 0 rgb(255 255 255 / 0.2),
+      inset 0 0 12px rgb(var(--signal) / 0.2),
+      0 0 0 1px rgb(var(--signal) / 0.45),
+      0 4px 16px -4px rgb(var(--signal) / 0.35);
   }
 
   .glass-btn-ring:hover:not(:disabled) {
-    border-color: rgba(var(--brand-rgb), 0.95);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.26),
-      inset 0 0 16px rgba(var(--brand-rgb), 0.3),
-      0 0 0 1px rgba(var(--brand-rgb), 0.45),
-      0 6px 22px rgba(var(--brand-rgb), 0.34);
+      inset 0 1px 0 rgb(255 255 255 / 0.26),
+      inset 0 0 16px rgb(var(--signal) / 0.28),
+      0 0 0 1px rgb(var(--signal) / 0.6),
+      0 6px 22px -4px rgb(var(--signal) / 0.45);
   }
 
-  /*
-    Near-opaque dark interior — use when a .glass-btn sits inside .ai-frame-btn so
-    the breathing halo only glows on the outline, not through the whole button.
-    Same idea as .quick-surface for the quick-gen box.
-  */
+  /* Near-opaque interior, for a button sitting inside the signal frame. */
   .glass-btn-solid {
-    background: rgba(11, 11, 18, 0.92);
-    border-color: rgba(255, 255, 255, 0.1);
+    --glass-alpha: 0.02;
+    background: rgb(var(--room-raised) / 0.94);
   }
 
   .glass-btn-solid:hover:not(:disabled) {
-    background: rgba(20, 20, 30, 0.94);
-  }
-
-  /* Oversized hero wordmark for the login split layout */
-  .wordmark-hero {
-    @apply bg-gradient-to-br from-white to-brand-soft bg-clip-text font-display font-normal leading-none text-transparent;
-    font-size: clamp(48px, 8vw, 92px);
-    letter-spacing: 0.1em;
-  }
-
-  /* ── App shell ──────────────────────────────────────────────────────────── */
-
-  /* Studio background — dark void + a faint dot matrix + soft brand vignette */
-  .app-bg {
-    background-color: var(--bg, #06060e);
-    background-image:
-      radial-gradient(circle at 50% 0%, rgba(var(--brand-rgb), 0.08) 0%, transparent 55%),
-      radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-    background-size:
-      100% 100%,
-      22px 22px;
-    background-position:
-      center top,
-      -11px -11px;
+    background: rgb(var(--room-raised) / 0.98);
   }
 
   /*
-    General-purpose glass surface (sidebar rail, quick-gen inner box). Same glass
-    language as .glass-card but without the fixed max-width or specular rim.
+    The selected segment of a Segmented control.
+
+    Technique adapted from React Bits' BorderGlow (MIT): several shadows of one
+    hue at increasing blur, inset and outset together, so the edge reads as a lit
+    filament instead of a flat 1px stroke. The original tracks the pointer and
+    re-renders on mousemove — meaningless on a 36px pill, and this app draws up
+    to four of them in a row, so this is the static distillation.
+
+    The ring is `inset ... 0 0 0 1px` rather than a real border: a border would
+    change the box on selection and shove the neighbouring labels sideways.
   */
-  .glass-panel {
-    @apply rounded-card border border-white/10;
-    background: rgba(10, 10, 20, 0.42);
-    backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
-    -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
+  .pill-glow {
+    background: rgb(var(--signal) / 0.08);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 10px 30px rgba(0, 0, 0, 0.35),
-      0 0 60px rgba(var(--brand-rgb), 0.05);
+      inset 0 0 0 1px rgb(var(--signal) / 0.55),
+      inset 0 0 8px -2px rgb(var(--signal) / 0.3),
+      0 0 0 1px rgb(var(--signal) / 0.22),
+      0 0 10px -1px rgb(var(--signal) / 0.4),
+      0 0 20px -4px rgb(var(--signal) / 0.22);
+  }
+
+  .wordmark {
+    @apply block font-display text-2xs font-bold uppercase tracking-wordmark text-ink/90;
+  }
+
+  .wordmark-hero {
+    @apply bg-gradient-to-br from-white via-white to-signal-bright bg-clip-text font-display leading-none text-transparent;
+    font-size: clamp(44px, 9vw, 92px);
+    font-weight: 700;
+    font-stretch: 118%;
+    letter-spacing: 0.02em;
+  }
+
+  /* Small uppercase section label. Was duplicated inline across four files. */
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-eyebrow text-signal-bright/80;
   }
 }
 
-/* ── AI "breathing" border ────────────────────────────────────────────────
-   A multi-hue conic gradient that slowly rotates (--ai-angle) and pulses opacity
-   (breathe), signalling the quick-gen box is AI-powered. @property makes the
-   conic angle animatable; where unsupported (older Firefox) the rotation no-ops
-   but the opacity breathe still runs. */
+/* ═══ The room ═════════════════════════════════════════════════════════════
+   The chromatic field the glass refracts: a cool signal pole, a warm amber one,
+   and a dot matrix for the console texture. Flat black behind glass reads as a
+   dark theme; this is what makes it read as a material.
+
+   The second layer is the pulse. Its period is the playing track's tempo, and
+   playback toggles `animation-play-state` — no JS runs per frame. */
+
+.studio-field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 72% 62% at 14% 4%, rgb(var(--signal) / 0.15) 0%, transparent 62%),
+    radial-gradient(ellipse 58% 56% at 88% 92%, rgb(var(--amber) / 0.09) 0%, transparent 58%),
+    radial-gradient(ellipse 54% 50% at 66% 32%, rgb(var(--signal-dim) / 0.13) 0%, transparent 56%),
+    radial-gradient(rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    22px 22px;
+  background-position:
+    center,
+    center,
+    center,
+    -11px -11px;
+}
+
+.studio-field::after {
+  content: "";
+  position: absolute;
+  inset: -12%;
+  background: radial-gradient(
+    ellipse 46% 42% at 50% 46%,
+    rgb(var(--signal) / 0.13) 0%,
+    rgb(var(--signal-dim) / 0.05) 44%,
+    transparent 68%
+  );
+  opacity: 0.55;
+  will-change: opacity, transform;
+}
+
+/* Fast attack, slow decay — an envelope, not a sine. */
+@keyframes room-beat {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  11% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  58% {
+    opacity: 0.64;
+    transform: scale(1.006);
+  }
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .studio-field::after {
+    animation: room-beat calc(60s / var(--bpm)) ease-out infinite;
+    animation-play-state: var(--beat-state);
+  }
+}
+
+/* ═══ The signal frame ═════════════════════════════════════════════════════
+   One animated frame in the whole app, on the quick-generate box. It used to
+   run in four places as a rotating rainbow, which is the single loudest "generic
+   AI product" cue there is. Now it is a two-tone signal sweep, once. */
+
 @property --ai-angle {
   syntax: "<angle>";
   inherits: false;
@@ -300,207 +606,113 @@
 @keyframes ai-breathe {
   0%,
   100% {
-    opacity: 0.4;
+    opacity: 0.5;
   }
   50% {
-    opacity: 0.6;
+    opacity: 0.75;
   }
 }
 
 .ai-frame {
   position: relative;
-  border-radius: 18px;
+  /* Tracks `.quick-surface`'s own radius — the frame is drawn on the panel's
+     edge, so a mismatch here shows up as a bright sliver at each corner. */
+  border-radius: 24px;
+  /*
+    An OUTER glow, and outer is the whole point.
+
+    This replaces a blurred pseudo-element that sat behind the panel. Behind is
+    exactly where it must not be: the panel is glass, so its backdrop-filter
+    sampled that halo and smeared it across the entire interior — the box read
+    as a stain rather than a lit edge. The spec clips an outer box-shadow to
+    outside the border box, so this cannot end up behind the glass no matter
+    how far it spreads.
+  */
+  box-shadow:
+    0 0 0 1px rgb(var(--signal) / 0.1),
+    0 0 18px -2px rgb(var(--signal) / 0.3),
+    0 0 48px -6px rgb(var(--signal) / 0.18);
 }
 
-/* Crisp gradient border via mask-composite */
+/* The travelling filament itself: a 1.5px conic border, masked to the rim. */
 .ai-frame::before {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: inherit;
   padding: 1.5px;
+  border-radius: inherit;
   background: conic-gradient(
     from var(--ai-angle),
-    #6c5cff,
-    #4cc9f0,
-    #b16cff,
-    #ff6ec7,
-    #6c5cff
+    rgb(var(--signal)),
+    rgb(var(--amber)),
+    rgb(var(--signal-bright)),
+    rgb(var(--signal-dim)),
+    rgb(var(--signal))
   );
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  pointer-events: none;
-}
-
-/* Blurred halo bleeding out from behind the panel edges */
-.ai-frame::after {
-  content: "";
-  position: absolute;
-  inset: -7px;
-  z-index: -1;
-  border-radius: inherit;
-  background: conic-gradient(
-    from var(--ai-angle),
-    #6c5cff,
-    #4cc9f0,
-    #b16cff,
-    #ff6ec7,
-    #6c5cff
-  );
-  filter: blur(16px);
-  opacity: 0.2;
   pointer-events: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .ai-frame::before {
     animation:
-      ai-spin 7s linear infinite,
-      ai-breathe 4.5s ease-in-out infinite;
-  }
-  .ai-frame::after {
-    animation:
-      ai-spin 7s linear infinite,
-      ai-breathe 4.5s ease-in-out infinite;
-  }
-}
-
-/* Subtler sibling of .ai-frame — used by the Pro toggle pill */
-.ai-frame-soft {
-  position: relative;
-  border-radius: 999px;
-}
-
-.ai-frame-soft::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(
-    from var(--ai-angle),
-    #6c5cff,
-    #4cc9f0,
-    #b16cff,
-    #ff6ec7,
-    #6c5cff
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0.8;
-  pointer-events: none;
-}
-
-.ai-frame-soft::after {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  z-index: -1;
-  border-radius: inherit;
-  background: conic-gradient(
-    from var(--ai-angle),
-    #6c5cff,
-    #4cc9f0,
-    #b16cff,
-    #ff6ec7,
-    #6c5cff
-  );
-  filter: blur(13px);
-  opacity: 0.16;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .ai-frame-soft::before {
-    animation:
-      ai-spin 9s linear infinite,
-      ai-breathe 5s ease-in-out infinite;
-  }
-  .ai-frame-soft::after {
-    animation:
       ai-spin 9s linear infinite,
       ai-breathe 5s ease-in-out infinite;
   }
 }
 
 /*
-  Breathing conic outline sized for a pill/button (sibling of .ai-frame). Wrap a
-  .glass-btn in this to give it the same rotating, pulsing AI border as the
-  quick-gen box. Radius matches .rounded-el so the border hugs the button.
+  Quiet siblings. These carried the same rotating gradient; they are now a still
+  signal outline so the animated frame above stays the only moving border.
 */
+.ai-frame-soft,
 .ai-frame-btn {
   position: relative;
+}
+
+.ai-frame-soft {
+  border-radius: 999px;
+}
+
+.ai-frame-btn {
   border-radius: 12px;
 }
 
+.ai-frame-soft::before,
 .ai-frame-btn::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 1.5px;
-  background: conic-gradient(from var(--ai-angle), #6c5cff, #4cc9f0, #b16cff, #ff6ec7, #6c5cff);
+  padding: 1px;
+  background: linear-gradient(140deg, rgb(var(--signal) / 0.9), rgb(var(--signal-dim) / 0.45));
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  z-index: 1;
 }
 
 .ai-frame-btn::after {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -5px;
   z-index: -1;
   border-radius: inherit;
-  background: conic-gradient(from var(--ai-angle), #6c5cff, #4cc9f0, #b16cff, #ff6ec7, #6c5cff);
-  filter: blur(16px);
+  background: rgb(var(--signal) / 0.5);
+  filter: blur(14px);
   opacity: 0.3;
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .ai-frame-btn::before {
-    animation:
-      ai-spin 7s linear infinite,
-      ai-breathe 4.5s ease-in-out infinite;
-  }
-  .ai-frame-btn::after {
-    animation:
-      ai-spin 7s linear infinite,
-      ai-breathe 4.5s ease-in-out infinite;
-  }
-}
+/* ═══ Motion utilities ═════════════════════════════════════════════════════ */
 
-/*
-  Near-opaque dark glass interior for the quick-gen box. Keeps the inside reading
-  as glass (not glowing) while the conic border + perimeter halo do the glowing;
-  the slight transparency lets a touch of that glow seep behind the prompt.
-*/
-.quick-surface {
-  position: relative;
-  border-radius: 16px;
-  background: rgba(9, 9, 15, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    inset 0 18px 40px -28px rgba(var(--brand-rgb), 0.28);
-}
-
-/*
-  Indeterminate progress bar — a brand-tinted highlight that sweeps left→right.
-  Used by the "composing" overlay where the model gives no real percentage.
-*/
+/* Indeterminate sweep, for the composing overlay where there is no real %. */
 @keyframes progress-sweep {
   0% {
     transform: translateX(-100%);
@@ -515,7 +727,7 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(var(--brand-rgb), 0.9) 50%,
+    rgb(var(--signal) / 0.95) 50%,
     transparent 100%
   );
 }
@@ -526,19 +738,82 @@
   }
 }
 
-/* Living multi-hue text fill (for the word "quick") */
-@keyframes ai-flow {
+/* ═══ Shuffling suggestion chips ═══════════════════════════════════════════
+   A rotation is two movements, not one: the old set leaves to the LEFT, the new
+   set arrives from the RIGHT, so the row reads as advancing rather than
+   flickering. The JS half is useShuffledPicks; the durations there
+   (CHIPS_EXIT_MS / CHIPS_ENTER_MS) must match the ones below or the swap lands
+   mid-fade.
+
+   Applied to the ROW, not to each chip: staggering twenty small elements is a
+   lot of compositor work for an effect nobody asked to be busier. */
+
+@keyframes chips-out {
+  to {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+}
+
+@keyframes chips-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* One chip swapped after being picked — no row movement, just a quiet arrival. */
+@keyframes chip-swap {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chips-out {
+    animation: chips-out 280ms ease-in both;
+  }
+
+  .chips-in {
+    animation: chips-in 320ms ease-out both;
+  }
+
+  .chip-swap {
+    animation: chip-swap 260ms ease-out both;
+  }
+}
+
+/* Metallic sweep across a word. Restrained sibling of React Bits' ShinyText. */
+@keyframes shine {
   0% {
-    background-position: 0% 50%;
+    background-position: 100% 50%;
   }
   100% {
-    background-position: 200% 50%;
+    background-position: -100% 50%;
   }
 }
 
 .text-ai {
-  background: linear-gradient(90deg, #7a68fc, #4cc9f0, #b16cff, #ff6ec7, #7a68fc);
+  background: linear-gradient(
+    100deg,
+    rgb(var(--signal)) 0%,
+    rgb(var(--signal-bright)) 22%,
+    rgb(var(--ink)) 50%,
+    rgb(var(--signal-bright)) 78%,
+    rgb(var(--signal)) 100%
+  );
   background-size: 200% 100%;
+  /* Still reads as a lit word with the sweep switched off. */
+  background-position: 50% 50%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -546,32 +821,54 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .text-ai {
-    animation: ai-flow 6s linear infinite;
+    animation: shine 7s linear infinite;
   }
 }
 
-/* ── Live AI-assistant avatar ───────────────────────────────────────────────
-   A breathing brand aura sits behind the Lottie character to light it from
-   behind and tie it into the glass panel. */
+/* Assistant avatar aura. */
 .avatar-aura {
   box-shadow:
-    inset 0 0 34px rgba(var(--brand-rgb), 0.3),
-    0 0 26px rgba(var(--brand-rgb), 0.2);
+    inset 0 0 34px rgb(var(--signal) / 0.24),
+    0 0 26px rgb(var(--signal) / 0.16);
 }
 
 @keyframes avatar-aura-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 0.9; }
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .avatar-aura { animation: avatar-aura-pulse 3.2s ease-in-out infinite; }
+  .avatar-aura {
+    animation: avatar-aura-pulse 3.2s ease-in-out infinite;
+  }
 }
 
-/* ── Create form: settings rail ─────────────────────────────────────────────
-   In Advanced mode the form body becomes two columns (inputs + settings rail)
-   whenever the box itself is wide enough — a container query so it tracks the
-   real free space (and zoom), not the viewport. Below the threshold it stacks. */
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.caret-blink {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+/* ═══ Layout utilities ═════════════════════════════════════════════════════ */
+
+/*
+  The Create form becomes two columns whenever the box itself is wide enough — a
+  container query, so it tracks real free space and zoom rather than the viewport.
+*/
 .create-cq {
   container-type: inline-size;
 }
@@ -583,17 +880,18 @@
     column-gap: 1.25rem;
     align-items: start;
   }
-  /* When side-by-side, drop the stacked top margin on the rail. */
+
   .create-cols > .create-aside {
     margin-top: 0;
   }
 }
 
-/* Blinking caret for the assistant's streaming prompt text */
-@keyframes caret-blink {
-  0%, 45% { opacity: 1; }
-  55%, 100% { opacity: 0; }
+/* Hide a scrollbar without losing the scrolling. */
+.scroll-plain {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.caret-blink {
-  animation: caret-blink 1s steps(1) infinite;
+
+.scroll-plain::-webkit-scrollbar {
+  display: none;
 }

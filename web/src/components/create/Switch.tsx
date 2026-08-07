@@ -13,7 +13,7 @@ interface SwitchProps {
 
 /**
  * Apple-style sliding toggle in the liquid-glass language: a recessed track that
- * lights up brand-purple when on, with a raised glass knob.
+ * lights up signal-teal when on, with a raised glass knob.
  */
 export default function Switch({
   checked,
@@ -35,8 +35,8 @@ export default function Switch({
         disabled ? "cursor-not-allowed opacity-40" : ""
       } ${
         checked
-          ? "border-brand/40 bg-brand/70 shadow-[inset_0_1px_3px_rgba(0,0,0,0.3),0_0_12px_rgba(108,92,231,0.45)]"
-          : "border-white/10 bg-white/[0.06] shadow-[inset_0_1px_3px_rgba(0,0,0,0.4)]"
+          ? "border-signal/40 bg-signal/70 shadow-[inset_0_1px_3px_rgb(0_0_0/0.3),0_0_12px_rgb(52_227_200/0.45)]"
+          : "border-white/10 bg-white/[0.06] shadow-[inset_0_1px_3px_rgb(0_0_0/0.4)]"
       }`}
     >
       <span

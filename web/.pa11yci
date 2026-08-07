@@ -1,0 +1,30 @@
+{
+  "//": [
+    "Accessibility gate. Run against a built preview:",
+    "  npm run build && npx vite preview --port 4173 & npm run a11y",
+    "",
+    "Only the two public routes are listed. The signed-in routes need a real",
+    "session — a refresh token in localStorage plus an API to exchange it — so",
+    "covering them here would mean either checking a credential into the repo or",
+    "asserting against a login form that never resolves. Run those against a",
+    "deployed environment instead, with --config a11y.authed.json.",
+    "",
+    "Colour contrast is the reason this exists: text over translucent glass is",
+    "exactly the thing that regresses silently when a tint gets nudged."
+  ],
+  "defaults": {
+    "standard": "WCAG2AA",
+    "timeout": 30000,
+    "wait": 700,
+    "concurrency": 1,
+    "reporters": ["cli"],
+    "chromeLaunchConfig": {
+      "args": ["--no-sandbox", "--disable-dev-shm-usage"]
+    },
+    "ignore": []
+  },
+  "urls": [
+    "http://localhost:4173/login",
+    "http://localhost:4173/signup"
+  ]
+}

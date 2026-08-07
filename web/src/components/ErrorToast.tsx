@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ApiError } from "../lib/api";
 import { humaniseSeconds } from "../lib/track";
@@ -74,18 +75,25 @@ export default function ErrorToast({
   // A 404 should also drop the stale list, but that invalidation belongs to the
   // caller that knows which query produced it.
   if (!rendered) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  // Portalled for the same reason as <JobProgress>: every caller mounts this
+  // inside a card with a backdrop-filter, which is a containing block for
+  // `fixed`, so in place it anchored to the card instead of the viewport.
+  return createPortal(
     <div
       role="alert"
-      className="fixed bottom-5 left-1/2 z-[60] w-[min(420px,calc(100vw-32px))] -translate-x-1/2 animate-rise"
+      // `--dock` is the room the mobile tab bar and mini player occupy; the
+      // toast has to clear them or it lands underneath. Unset off the app shell
+      // (the auth pages), where the fallback applies.
+      className="fixed bottom-[calc(env(safe-area-inset-bottom)+var(--dock,20px)+12px)] left-1/2 z-[60] w-[min(420px,calc(100vw-32px))] -translate-x-1/2 animate-rise lg:bottom-5"
     >
-      <div className="glass-panel flex items-start gap-3 border-red-400/20 p-3.5">
+      <div className="lg-lens flex items-start gap-3 border border-danger/25 p-3.5">
         <div className="min-w-0 flex-1">
-          <p className="text-[13.5px] leading-snug text-ink">{rendered.message}</p>
+          <p className="text-sm leading-snug text-ink">{rendered.message}</p>
           {rendered.requestId && (
             // What makes a support message answerable from CloudWatch.
-            <p className="mt-1 text-[11px] tabular-nums text-ink-faint">
+            <p className="mt-1 font-mono text-2xs tabular-nums text-ink-faint">
               Reference: {rendered.requestId}
             </p>
           )}
@@ -99,6 +107,7 @@ export default function ErrorToast({
           <X className="h-4 w-4" strokeWidth={2} />
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

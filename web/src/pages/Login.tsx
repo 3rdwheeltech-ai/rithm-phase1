@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { login } from "../lib/api";
+import { useLens } from "../lib/useLens";
+import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { GoogleLogo, AppleLogo, MicrosoftLogo } from "../components/SocialLogos";
 
 // Social providers are visual placeholders for a future release.
@@ -23,6 +25,11 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // The sign-in card is the first glass the user ever sees, and it sits over the
+  // field's brightest corner — the one place the material has to sell itself.
+  const lensRef = useLens<HTMLDivElement>("md", 24);
+  const specularRef = useSpecular<HTMLDivElement>();
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
@@ -38,19 +45,23 @@ export default function Login() {
   }
 
   return (
-    <div className="flex w-full max-w-5xl flex-col items-center gap-14 px-2 md:flex-row md:items-stretch md:justify-between md:gap-12">
+    <div className="auth-shell">
+      <div className="flex w-full max-w-5xl flex-col items-center gap-10 sm:gap-14 md:flex-row md:items-stretch md:justify-between md:gap-12">
       {/* Left — brand hero, no glass. Stretches to the card's height so the
           wordmark sits on its top edge and the tagline on its bottom edge. */}
       <div className="flex animate-fade-in flex-col text-center md:flex-1 md:justify-between md:text-left">
         <h1 className="wordmark-hero">RITHM</h1>
-        <p className="mt-4 text-[15px] font-medium tracking-wide text-ink-muted md:mt-0">
+        <p className="mt-4 text-md font-medium tracking-wide text-ink-muted md:mt-0">
           Your AI music studio.
         </p>
       </div>
 
       {/* Right — sign-in glass card */}
-      <div className="glass-card animate-rise px-10 pb-10 pt-11">
-        <h2 className="mb-1.5 text-[23px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+      <div
+        ref={mergeRefs(lensRef, specularRef)}
+        className="glass-card animate-rise px-10 pb-10 pt-11"
+      >
+        <h2 className="mb-1.5 text-xl font-semibold leading-tight tracking-[-0.02em] text-ink">
           Welcome back
         </h2>
         <p className="mb-7 text-sm text-ink-muted">Sign in to your studio</p>
@@ -60,6 +71,7 @@ export default function Login() {
             type="email"
             className="glass-input"
             placeholder="Email address"
+          aria-label="Email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
@@ -69,13 +81,14 @@ export default function Login() {
             type="password"
             className="glass-input"
             placeholder="Password"
+          aria-label="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
           />
           {err && (
-            <div className="rounded-[9px] border border-red-400/20 bg-red-400/[0.07] px-3 py-2.5 text-[13px] leading-normal text-red-300">
+            <div className="rounded-[9px] border border-danger/25 bg-danger/[0.08] px-3 py-2.5 text-sm leading-normal text-danger">
               {err}
             </div>
           )}
@@ -84,7 +97,7 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="my-5 flex items-center gap-3 text-[12px] text-ink-faint">
+        <div className="my-5 flex items-center gap-3 text-xs text-ink-faint">
           <span className="h-px flex-1 bg-white/10" />
           or continue with
           <span className="h-px flex-1 bg-white/10" />
@@ -104,15 +117,16 @@ export default function Login() {
           ))}
         </div>
 
-        <p className="mt-6 text-center text-[13px] text-ink-faint">
+        <p className="mt-6 text-center text-sm text-ink-faint">
           No account?{" "}
           <Link
             to="/signup"
-            className="font-medium text-brand-soft transition-colors hover:text-white"
+            className="font-medium text-signal-bright transition-colors hover:text-white"
           >
             Create one
           </Link>
         </p>
+        </div>
       </div>
     </div>
   );

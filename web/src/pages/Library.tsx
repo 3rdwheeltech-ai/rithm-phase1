@@ -6,6 +6,7 @@ import { useDeleteTrack } from "../hooks/useDeleteTrack";
 import { usePlayer } from "../store/player";
 import { formatDuration, trackTitle } from "../lib/track";
 import ErrorToast from "../components/ErrorToast";
+import CountUp from "../components/reactbits/CountUp";
 
 export default function Library() {
   const nav = useNavigate();
@@ -23,30 +24,35 @@ export default function Library() {
   const total = data?.pages[0]?.totalCount;
 
   return (
-    <div className="flex flex-1 flex-col py-8">
+    <div className="flex flex-1 flex-col py-6 sm:py-8">
       {!dismissed && (
         <ErrorToast error={deleteTrack.error} onDismiss={() => setDismissed(true)} />
       )}
 
       <div className="mx-auto w-full max-w-[860px] animate-fade-in">
         <div className="mb-6 flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-brand/25 bg-brand/15 text-brand-soft">
+          <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-el border border-signal/25 bg-signal/15 text-signal-bright">
             <LibraryIcon className="h-5 w-5" strokeWidth={1.75} />
           </span>
-          <div>
-            <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">Library</h1>
-            <p className="text-[13px] text-ink-muted">
-              {total === undefined
-                ? "Your generated tracks live here"
-                : `${total} track${total === 1 ? "" : "s"}`}
+          <div className="min-w-0">
+            <h1 className="font-display text-xl font-semibold text-ink">Library</h1>
+            <p className="text-sm text-ink-muted">
+              {total === undefined ? (
+                "Your generated tracks live here"
+              ) : (
+                <>
+                  <CountUp to={total} className="font-mono tabular-nums" /> track
+                  {total === 1 ? "" : "s"}
+                </>
+              )}
             </p>
           </div>
         </div>
 
         {isLoading ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
             {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="glass-panel h-[112px] animate-pulse opacity-50" />
+              <div key={i} className="surface h-[112px] animate-pulse opacity-50" />
             ))}
           </div>
         ) : tracks.length === 0 ? (
@@ -54,8 +60,8 @@ export default function Library() {
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-ink-faint">
               <Music className="h-7 w-7" strokeWidth={1.5} />
             </div>
-            <p className="text-[15px] font-medium text-ink">No tracks yet</p>
-            <p className="mt-1 max-w-[320px] text-[13px] text-ink-muted">
+            <p className="text-md font-medium text-ink">No tracks yet</p>
+            <p className="mt-1 max-w-[320px] text-sm text-ink-muted">
               Generate something and it'll show up here, ready to play.
             </p>
             <button
@@ -68,20 +74,30 @@ export default function Library() {
           </div>
         ) : (
           <>
-            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
               {tracks.map((track) => {
                 const active = currentId === track.id;
                 return (
-                  <li key={track.id} className="glass-panel group/card p-4 transition-all hover:-translate-y-0.5">
+                  <li
+                    key={track.id}
+                    // Opaque, not glass: thirty backdrop-filter layers in a
+                    // scrolling grid is what makes a list feel cheap.
+                    className="surface surface-hover group/card p-4"
+                    style={{ "--r": "16px", "--pad": "16px" } as React.CSSProperties}
+                  >
                     <div className="flex items-start gap-3">
                       <button
                         type="button"
-                        onClick={() => (active && isPlaying ? setPlaying(false) : play(track))}
+                        // The whole loaded library becomes the queue, so next
+                        // and previous walk it in the order shown here.
+                        onClick={() =>
+                          active && isPlaying ? setPlaying(false) : play(track, tracks)
+                        }
                         aria-label={`${active && isPlaying ? "Pause" : "Play"} ${trackTitle(track)}`}
                         className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
                           active
-                            ? "border-brand/50 bg-brand/25 text-ink"
-                            : "border-white/10 bg-brand/15 text-brand-soft group-hover/card:bg-brand/25"
+                            ? "border-signal/50 bg-signal/25 text-ink"
+                            : "border-white/10 bg-signal/15 text-signal-bright group-hover/card:bg-signal/25"
                         }`}
                       >
                         {active && isPlaying ? (
@@ -96,10 +112,10 @@ export default function Library() {
                         onClick={() => nav(`/track/${track.id}`)}
                         className="min-w-0 flex-1 text-left"
                       >
-                        <p className="truncate text-[14px] font-semibold text-ink">
+                        <p className="truncate text-sm font-semibold text-ink">
                           {trackTitle(track)}
                         </p>
-                        <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-ink-faint">
+                        <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-ink-faint">
                           {track.prompt}
                         </p>
                       </button>
@@ -112,13 +128,13 @@ export default function Library() {
                         }}
                         title="Delete"
                         aria-label={`Delete ${trackTitle(track)}`}
-                        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-ink-faint opacity-0 transition-all hover:bg-red-500/10 hover:text-red-300 focus-visible:opacity-100 group-hover/card:opacity-100"
+                        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-control text-ink-faint transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 lg:opacity-0 lg:group-hover/card:opacity-100"
                       >
                         <Trash2 className="h-4 w-4" strokeWidth={2} />
                       </button>
                     </div>
 
-                    <div className="mt-3 flex items-center gap-2.5 text-[11.5px] tabular-nums text-ink-faint">
+                    <div className="mt-3 flex items-center gap-2.5 font-mono text-2xs tabular-nums text-ink-faint">
                       <span>{formatDuration(track.length_seconds)}</span>
                       {track.genre && <span>{track.genre}</span>}
                       {track.bpm !== null && <span>{track.bpm} BPM</span>}
@@ -134,7 +150,7 @@ export default function Library() {
                   type="button"
                   onClick={() => void fetchNextPage()}
                   disabled={isFetchingNextPage}
-                  className="glass-btn rounded-el px-5 py-2.5 text-[13.5px] font-medium disabled:opacity-50"
+                  className="glass-btn rounded-el px-5 py-2.5 text-sm font-medium disabled:opacity-50"
                 >
                   {isFetchingNextPage ? "Loading…" : "Load more"}
                 </button>

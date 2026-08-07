@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import CreateForm from "./CreateForm";
 import { renderWithProviders, jsonResponse } from "../../test-utils";
 import { MAX_INSTRUMENTS } from "../../types/api";
+import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -63,11 +64,14 @@ describe("CreateForm", () => {
         "genre",
         "instruments",
         "length_seconds",
+        "lyrics",
         "mood",
         "prompt",
         "vocal",
       ].sort(),
     );
+    // Null, not "" — an empty string is a different instruction to the model.
+    expect(body.lyrics).toBeNull();
     expect(body.prompt).toBe("warm lo-fi piano");
     expect(body.vocal).toBe(true);
     expect(body.length_seconds).toBe(90);
@@ -146,12 +150,94 @@ describe("CreateForm", () => {
     expect((generateBody().instruments as string[]).length).toBe(MAX_INSTRUMENTS);
   });
 
-  it("renders the controls the API cannot carry, disabled rather than hidden", async () => {
+  it("sends the lyrics the user wrote", async () => {
     const user = userEvent.setup();
     renderWithProviders(<CreateForm />);
 
-    // Lyrics: there is no user-lyrics path in the worker.
-    expect(screen.getByRole("tab", { name: "Write" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Describe the track"), "opera metal");
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    // `[[` is userEvent's escape for a literal `[` — it reads key descriptors
+    // like `[Enter]` otherwise. The typed text is `[verse]\nneon rain`.
+    await user.type(screen.getByLabelText("Your lyrics"), "[[verse]{enter}neon rain");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = generateBody();
+    // Structure tags are ACE-Step's own — passed through, never rewritten.
+    expect(body.lyrics).toBe("[verse]\nneon rain");
+    expect(body.vocal).toBe(true);
+  });
+
+  it("opens in Write mode with the lyrics box ready and Create usable", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    // Write is the landing state, so the editor is there without a click.
+    expect(screen.getByLabelText("Your lyrics")).toBeInTheDocument();
+
+    // An empty box must NOT gate the primary button — that would greet every
+    // visitor with a dead Create, which is the bug this page started with.
+    await user.type(screen.getByLabelText("Describe the track"), "opera metal");
+    expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    // Empty lyrics collapse to null: the model writes the words.
+    const body = generateBody();
+    expect(body.lyrics).toBeNull();
+    expect(body.vocal).toBe(true);
+  });
+
+  it("does not send lyrics written before switching to Instrumental", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.type(screen.getByLabelText("Describe the track"), "rain");
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    await user.type(screen.getByLabelText("Your lyrics"), "some words");
+    await user.click(screen.getByRole("tab", { name: "Instrumental" }));
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    // lyrics + vocal:false is a 422 at the API; the mode check is what stops
+    // the pair ever being built.
+    const body = generateBody();
+    expect(body.vocal).toBe(false);
+    expect(body.lyrics).toBeNull();
+  });
+
+  it("refills the instrument suggestions as they are used", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+
+    const row = () =>
+      screen
+        .getAllByRole("button")
+        .map((b) => b.textContent?.trim() ?? "")
+        .filter((text) => INSTRUMENT_SUGGESTIONS.includes(text));
+
+    const before = row();
+    expect(before).toHaveLength(8);
+
+    const taken = before[2]!;
+    await user.click(screen.getByRole("button", { name: taken }));
+
+    const after = row();
+    // The slot refills rather than leaving the row a chip short, and the taken
+    // instrument does not come back as a suggestion.
+    expect(after).toHaveLength(8);
+    expect(after).not.toContain(taken);
+    expect(new Set(after).size).toBe(8);
+    // It moved to the chosen list instead.
+    expect(screen.getByRole("button", { name: `Remove ${taken}` })).toBeInTheDocument();
+  });
+
+  it("renders the controls the API cannot carry, disabled and tagged", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
     expect(screen.getByRole("tab", { name: "Describe" })).toBeDisabled();
 
     await user.click(screen.getByRole("tab", { name: "Advanced" }));
@@ -159,5 +245,26 @@ describe("CreateForm", () => {
     expect(screen.getByLabelText("Creativity")).toBeDisabled();
     expect(screen.getByLabelText("Vocal language")).toBeDisabled();
     expect(screen.getByLabelText("Key and scale")).toBeDisabled();
+    expect(screen.getByLabelText("Seed")).toBeDisabled();
+    expect(screen.getByLabelText("Song title")).toBeDisabled();
+
+    // Every one carries a visible tag, so the state reads without hovering.
+    expect(screen.getAllByText("Coming soon").length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("explains each disabled control from an enabled wrapper", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+
+    // A disabled control eats its own pointer events, so a `title` on it never
+    // fires. The explanation has to hang off an enabled ancestor — this is the
+    // regression guard for that.
+    const notes = screen.getAllByRole("note");
+    expect(notes.length).toBeGreaterThanOrEqual(6);
+    for (const note of notes) {
+      expect(note).toHaveAttribute("aria-label", expect.stringContaining("Coming soon"));
+      expect(note).not.toBeDisabled();
+    }
   });
 });

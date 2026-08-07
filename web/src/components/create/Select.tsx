@@ -39,7 +39,7 @@ export default function Select({
         className="glass-input cursor-pointer appearance-none pr-9 text-ink disabled:cursor-not-allowed disabled:opacity-40"
       >
         {options.map((o) => (
-          <option key={o.value} value={o.value} className="bg-[#0b0b12] text-ink">
+          <option key={o.value} value={o.value} className="bg-room-raised text-ink">
             {o.label}
           </option>
         ))}

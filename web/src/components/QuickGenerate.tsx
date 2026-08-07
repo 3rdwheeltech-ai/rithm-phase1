@@ -6,7 +6,12 @@ import TickSlider from "./create/TickSlider";
 import JobProgress from "./JobProgress";
 import ErrorToast from "./ErrorToast";
 import { useGenerate } from "../hooks/useGenerate";
+import { cn } from "../lib/cn";
+import { useLens } from "../lib/useLens";
+import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { formatDuration } from "../lib/track";
+import { PROMPT_SUGGESTIONS } from "../lib/suggestions";
+import { useShuffledPicks } from "../lib/useShuffledPicks";
 import {
   LENGTH_MAX_SECONDS,
   LENGTH_MIN_SECONDS,
@@ -14,14 +19,10 @@ import {
   type GenerateRequest,
 } from "../types/api";
 
-// Example prompts shown as chips below the box.
-const SUGGESTIONS = [
-  "Dreamy lo-fi with warm piano and soft rain",
-  "Upbeat synthwave for a midnight drive",
-  "Cinematic orchestral build with epic drums",
-];
+/** Three at a time, drawn from the twenty in PROMPT_SUGGESTIONS. */
+const VISIBLE_SUGGESTIONS = 3;
 
-/** Write / Prompt have no API field — see the Vocals control below. */
+/** "write" is never held as state here — it routes to /create. See below. */
 type LyricMode = "vocal" | "instrumental" | "write";
 
 export default function QuickGenerate() {
@@ -32,6 +33,13 @@ export default function QuickGenerate() {
   const [dismissed, setDismissed] = useState(false);
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const suggestions = useShuffledPicks(PROMPT_SUGGESTIONS, VISIBLE_SUGGESTIONS);
+
+  // The one surface on Home that sits directly over the field's bright pole, so
+  // it is the one where refraction is actually visible. Radius matches `--r`.
+  const lensRef = useLens<HTMLDivElement>("md", 24);
+  const specularRef = useSpecular<HTMLDivElement>();
+
   const { generate, stream, busy, error } = useGenerate({
     onCompleted: (trackId) => {
       if (trackId) nav(`/track/${trackId}`);
@@ -58,6 +66,7 @@ export default function QuickGenerate() {
       instruments: [],
       vocal: lyricMode !== "instrumental",
       length_seconds: lengthSeconds,
+      lyrics: null,
     };
     generate.mutate(body);
   }
@@ -68,7 +77,7 @@ export default function QuickGenerate() {
       {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
 
       <div className="ai-frame">
-        <div className="quick-surface p-5">
+        <div ref={mergeRefs(lensRef, specularRef)} className="quick-surface p-4 sm:p-5">
           <textarea
             ref={promptRef}
             value={prompt}
@@ -76,41 +85,40 @@ export default function QuickGenerate() {
             onChange={(e) => setPrompt(e.target.value)}
             aria-label="Describe the music you want"
             placeholder="Describe the music you want to create… e.g. dreamy lo-fi with warm piano and soft rain"
-            className="min-h-[92px] w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-faint"
+            className="min-h-[92px] w-full resize-none bg-transparent text-md leading-relaxed text-ink outline-none placeholder:text-ink-faint"
           />
           {prompt.length > 1800 && (
-            <p className="text-right text-[11.5px] tabular-nums text-ink-faint">
+            <p className="text-right font-mono text-2xs tabular-nums text-ink-faint">
               {prompt.length} / {PROMPT_MAX_LENGTH}
             </p>
           )}
 
           <div className="my-4 h-px bg-white/[0.07]" />
 
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-[12px] font-medium text-ink-muted">Vocals</span>
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="text-xs font-medium text-ink-muted">Vocals</span>
               <Segmented<LyricMode>
                 ariaLabel="Vocals"
                 size="sm"
                 value={lyricMode}
-                onChange={setLyricMode}
+                // "Write lyrics" is a door, not a mode: the quick surface has
+                // no room for a lyrics editor, so it hands off to /create
+                // rather than sitting there disabled.
+                onChange={(v) => (v === "write" ? nav("/create") : setLyricMode(v))}
                 options={[
                   { value: "vocal", label: "Sung" },
                   { value: "instrumental", label: "Instrumental" },
                   {
-                    // There is no user-lyrics path: the worker sends
-                    // "[Instrumental]" or lets the model write the words. Shown
-                    // disabled rather than hidden.
                     value: "write",
                     label: "Write lyrics",
-                    disabled: true,
-                    title: "Writing your own lyrics is coming later",
+                    title: "Write your own lyrics in the full Create page",
                   },
                 ]}
               />
             </div>
 
-            <div className="min-w-[240px] flex-1">
+            <div className="w-full sm:min-w-[240px] sm:flex-1">
               <TickSlider
                 label="Length"
                 value={lengthSeconds}
@@ -130,7 +138,7 @@ export default function QuickGenerate() {
                 type="button"
                 disabled={!canGenerate}
                 onClick={onGenerate}
-                className="glass-btn glass-btn-solid w-full rounded-el px-6 py-3 text-[14.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                className="glass-btn glass-btn-solid min-h-[48px] w-full rounded-el px-6 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy ? "Generating…" : "Generate"}
               </button>
@@ -139,16 +147,29 @@ export default function QuickGenerate() {
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {SUGGESTIONS.map((suggestion) => (
+      <div
+        // Reserves the row's height so the page does not jolt mid-rotation.
+        className={cn(
+          "mt-4 flex min-h-[36px] flex-wrap justify-center gap-2",
+          suggestions.phase === "out" && "chips-out",
+          suggestions.phase === "in" && "chips-in",
+        )}
+      >
+        {suggestions.picks.map((suggestion) => (
           <button
-            key={suggestion}
+            // Keyed by cycle too, so a rotation remounts the chip and a single
+            // post-pick swap animates on its own without the row moving.
+            key={`${suggestions.cycle}-${suggestion}`}
             type="button"
-            onClick={() => setPrompt(suggestion)}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] py-1.5 pl-3 pr-3.5 text-[12.5px] text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
+            onClick={() => {
+              setPrompt(suggestion);
+              suggestions.replace(suggestion);
+              promptRef.current?.focus();
+            }}
+            className="chip-swap inline-flex min-h-[36px] items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] pl-3 pr-3.5 text-xs text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink"
           >
-            <Music className="h-3.5 w-3.5 flex-shrink-0 text-brand-soft" strokeWidth={1.75} />
-            <span className="max-w-[230px] truncate">{suggestion}</span>
+            <Music className="h-3.5 w-3.5 flex-shrink-0 text-signal-bright" strokeWidth={1.75} />
+            <span className="max-w-[200px] truncate sm:max-w-[230px]">{suggestion}</span>
           </button>
         ))}
       </div>

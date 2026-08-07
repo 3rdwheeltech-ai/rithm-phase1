@@ -8,6 +8,8 @@ import Library from "./pages/Library";
 import TrackDetail from "./pages/TrackDetail";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
+import GlassFilters from "./components/GlassFilters";
+import StudioField from "./components/StudioField";
 import { useAuth } from "./store/auth";
 
 /**
@@ -29,6 +31,13 @@ function GuestOnly({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
+      {/*
+        Both sit outside <Routes> so the room and its lens filters survive
+        navigation — the field would restart its pulse on every route change if
+        it were mounted per page, and the filter defs are document-global.
+      */}
+      <StudioField />
+      <GlassFilters />
       <Routes>
         <Route
           path="/login"

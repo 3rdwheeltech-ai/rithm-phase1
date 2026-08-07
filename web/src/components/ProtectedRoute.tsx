@@ -18,7 +18,7 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center" aria-busy="true">
         <span className="sr-only">Restoring your session…</span>
-        <span className="h-6 w-6 rounded-full border-2 border-white/15 border-t-brand-soft motion-safe:animate-spin" />
+        <span className="h-6 w-6 rounded-full border-2 border-white/15 border-t-signal-bright motion-safe:animate-spin" />
       </div>
     );
   }

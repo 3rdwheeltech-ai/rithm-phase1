@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Lottie, { type LottieRefCurrentProps } from "lottie-react";
+import { useLens } from "../lib/useLens";
+import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import avatarAnimation from "../assets/avatar.lottie.json";
 
 // Prompts the assistant "streams" letter-by-letter, cycling on a loop.
@@ -66,7 +68,7 @@ function StreamingPrompt({ enabled }: { enabled: boolean }) {
 
   if (!enabled) {
     return (
-      <p className="mt-3 min-h-[2.5em] px-2 text-center text-[13px] leading-snug text-ink-muted">
+      <p className="mt-3 min-h-[2.5em] px-2 text-center text-sm leading-snug text-ink-muted">
         {PROMPTS[0]}
       </p>
     );
@@ -74,11 +76,11 @@ function StreamingPrompt({ enabled }: { enabled: boolean }) {
 
   return (
     <p
-      className="mt-3 min-h-[2.5em] px-2 text-center text-[13px] leading-snug text-ink-muted"
+      className="mt-3 min-h-[2.5em] px-2 text-center text-sm leading-snug text-ink-muted"
       aria-live="polite"
     >
       {text}
-      <span className="caret-blink ml-0.5 inline-block w-px align-baseline text-brand-soft">|</span>
+      <span className="caret-blink ml-0.5 inline-block w-px align-baseline text-signal-bright">|</span>
     </p>
   );
 }
@@ -102,6 +104,11 @@ export default function AvatarPanel({
   const lottieRef = useRef<LottieRefCurrentProps>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
 
+  // Matches the Player it stacks above, so the two read as one column of glass
+  // rather than two different materials.
+  const lensRef = useLens<HTMLElement>("md", 24);
+  const specularRef = useSpecular<HTMLElement>();
+
   // Honour the user's reduced-motion preference — hold the Lottie on its first
   // frame instead of looping.
   useEffect(() => {
@@ -118,14 +125,16 @@ export default function AvatarPanel({
 
   return (
     <section
-      className={`glass-panel relative flex flex-col items-center overflow-hidden p-4 ${className}`}
+      ref={mergeRefs(lensRef, specularRef)}
+      className={`lg-lens relative flex flex-col items-center overflow-hidden p-4 ${className}`}
+      style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
     >
-      <span className="mb-3 self-start text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-soft/70">
+      <span className="mb-3 self-start eyebrow">
         AI Assistant
       </span>
 
       {/* Avatar stage — Lottie character lit by a breathing brand aura behind it */}
-      <div className="relative w-full overflow-hidden rounded-card border border-white/10 bg-[radial-gradient(ellipse_at_50%_30%,rgba(var(--brand-rgb),0.22),transparent_70%)]">
+      <div className="relative w-full overflow-hidden rounded-card border border-white/10 bg-[radial-gradient(ellipse_at_50%_30%,rgb(var(--signal)/0.13),transparent_70%)]">
         {/* Aura glow behind the character */}
         <div className="avatar-aura pointer-events-none absolute inset-0 rounded-card" />
 
@@ -150,7 +159,7 @@ export default function AvatarPanel({
       <div className="ai-frame-btn mt-4 w-full max-w-[200px]">
         <button
           type="button"
-          className="glass-btn glass-btn-solid w-full rounded-el px-6 py-2.5 text-[14px] font-semibold"
+          className="glass-btn glass-btn-solid w-full rounded-el min-h-[44px] px-6 text-base font-semibold"
         >
           Talk
         </button>

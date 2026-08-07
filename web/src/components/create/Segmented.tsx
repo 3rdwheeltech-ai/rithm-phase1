@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import ComingSoon from "./ComingSoon";
 
 export interface SegmentOption<T extends string> {
   value: T;
@@ -35,14 +36,20 @@ export default function Segmented<T extends string>({
   size = "md",
   ariaLabel,
 }: SegmentedProps<T>) {
-  const pad = size === "sm" ? "px-3 py-1 text-[12px]" : "px-4 py-1.5 text-[13px]";
+  // Touch targets stay at 44px minimum however small the label gets.
+  const pad = size === "sm" ? "min-h-[36px] px-3 text-xs" : "min-h-[40px] px-4 text-sm";
 
   return (
-    <div role="tablist" aria-label={ariaLabel} className="glass-panel inline-flex items-center gap-1 !rounded-full p-1">
+    <div
+      role="tablist"
+      aria-label={ariaLabel}
+      className="lg-regular inline-flex max-w-full flex-wrap items-center gap-1 rounded-full p-1"
+      style={{ "--r": "999px" } as React.CSSProperties}
+    >
       {options.map((opt) => {
         const active = opt.value === value;
         const Icon = opt.icon;
-        return (
+        const button = (
           <button
             key={opt.value}
             type="button"
@@ -51,17 +58,28 @@ export default function Segmented<T extends string>({
             disabled={opt.disabled}
             title={opt.title}
             onClick={() => onChange(opt.value)}
-            className={`flex items-center gap-1.5 rounded-full font-medium transition-colors ${pad} ${
+            className={`flex items-center gap-1.5 rounded-full font-medium transition-all duration-200 ${pad} ${
               opt.disabled
                 ? "cursor-not-allowed text-ink-faint opacity-40"
                 : active
-                  ? "bg-white/10 text-ink"
-                  : "text-ink-muted hover:text-ink"
+                  ? "pill-glow text-ink"
+                  : "text-ink-muted hover:bg-white/[0.05] hover:text-ink"
             }`}
           >
-            {Icon && <Icon className="h-3.5 w-3.5 text-brand-soft" strokeWidth={1.75} />}
+            {Icon && <Icon className="h-3.5 w-3.5 text-signal-bright" strokeWidth={1.75} />}
             {opt.label}
           </button>
+        );
+
+        // A disabled <button> eats its own pointer events, so its `title` never
+        // fires — the explanation has to come from an enabled wrapper. See
+        // ComingSoon for the full reasoning.
+        return opt.disabled && opt.title ? (
+          <ComingSoon key={opt.value} className="inline-block" label={opt.title}>
+            {button}
+          </ComingSoon>
+        ) : (
+          button
         );
       })}
     </div>

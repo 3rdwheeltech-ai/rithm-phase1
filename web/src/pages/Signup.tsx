@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { login, signup } from "../lib/api";
+import { useLens } from "../lib/useLens";
+import { mergeRefs, useSpecular } from "../lib/useSpecular";
 
 // Must match the API's CURRENT_CONSENT_VERSION (api/app/config.py).
 const CONSENT_VERSION = "tos-2026-05";
@@ -15,6 +17,9 @@ export default function Signup() {
   const [agreed, setAgreed] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const lensRef = useLens<HTMLDivElement>("md", 24);
+  const specularRef = useSpecular<HTMLDivElement>();
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,10 +44,14 @@ export default function Signup() {
   }
 
   return (
-    <div className="glass-card animate-rise px-10 pb-10 pt-11">
+    <div className="auth-shell">
+      <div
+        ref={mergeRefs(lensRef, specularRef)}
+        className="glass-card animate-rise px-6 pb-8 pt-9 sm:px-10 sm:pb-10 sm:pt-11"
+      >
       <span className="wordmark mb-9">RITHM</span>
 
-      <h1 className="mb-1.5 text-[23px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+      <h1 className="mb-1.5 text-xl font-semibold leading-tight text-ink">
         Create account
       </h1>
       <p className="mb-7 text-sm text-ink-muted">Your studio is one step away</p>
@@ -52,6 +61,7 @@ export default function Signup() {
           type="text"
           className="glass-input"
           placeholder="Full name"
+          aria-label="Full name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoComplete="name"
@@ -61,6 +71,7 @@ export default function Signup() {
           type="email"
           className="glass-input"
           placeholder="Email address"
+          aria-label="Email address"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
@@ -70,6 +81,7 @@ export default function Signup() {
           type="tel"
           className="glass-input"
           placeholder="Phone — e.g. +14155550123"
+          aria-label="Phone number"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           autoComplete="tel"
@@ -80,22 +92,23 @@ export default function Signup() {
           type="password"
           className="glass-input"
           placeholder="Password — 8+ chars, 1 uppercase, 1 digit"
+          aria-label="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
           required
         />
-        <label className="mt-0.5 flex cursor-pointer select-none items-center gap-2.5 text-[13px] text-ink-faint">
+        <label className="mt-0.5 flex cursor-pointer select-none items-center gap-2.5 text-sm text-ink-faint">
           <input
             type="checkbox"
-            className="h-4 w-4 flex-shrink-0 cursor-pointer accent-brand"
+            className="h-4 w-4 flex-shrink-0 cursor-pointer accent-signal"
             checked={agreed}
             onChange={(e) => setAgreed(e.target.checked)}
           />
           I agree to the Terms of Service
         </label>
         {err && (
-          <div className="rounded-[9px] border border-red-400/20 bg-red-400/[0.07] px-3 py-2.5 text-[13px] leading-normal text-red-300">
+          <div className="rounded-[9px] border border-danger/25 bg-danger/[0.08] px-3 py-2.5 text-sm leading-normal text-danger">
             {err}
           </div>
         )}
@@ -104,12 +117,16 @@ export default function Signup() {
         </button>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-ink-faint">
+      <p className="mt-6 text-center text-sm text-ink-faint">
         Already have an account?{" "}
-        <Link to="/login" className="font-medium text-brand-soft transition-colors hover:text-white">
+        <Link
+          to="/login"
+          className="font-medium text-signal-bright transition-colors hover:text-white"
+        >
           Sign in
         </Link>
       </p>
+      </div>
     </div>
   );
 }

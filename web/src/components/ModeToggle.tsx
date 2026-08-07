@@ -24,7 +24,7 @@ export default function ModeToggle({ expanded = true }: { expanded?: boolean }) 
           aria-label={`Mode: ${mode}. Toggle.`}
           className={`flex h-9 w-full items-center justify-center rounded-el border transition-colors ${
             mode === "pro"
-              ? "border-transparent bg-white/10 text-brand-soft"
+              ? "border-transparent bg-white/10 text-signal-bright"
               : "border-white/10 text-ink-muted hover:bg-white/[0.06] hover:text-ink"
           }`}
         >
@@ -41,7 +41,7 @@ export default function ModeToggle({ expanded = true }: { expanded?: boolean }) 
           type="button"
           onClick={() => setMode("basic")}
           aria-pressed={mode === "basic"}
-          className={`flex-1 rounded-full px-4 py-1.5 text-[13px] font-medium transition-colors ${
+          className={`flex-1 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
             mode === "basic" ? "bg-white/10 text-ink" : "text-ink-muted hover:text-ink"
           }`}
         >
@@ -51,11 +51,11 @@ export default function ModeToggle({ expanded = true }: { expanded?: boolean }) 
           type="button"
           onClick={() => setMode("pro")}
           aria-pressed={mode === "pro"}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition-colors ${
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
             mode === "pro" ? "bg-white/10 text-ink" : "text-ink-muted hover:text-ink"
           }`}
         >
-          <Sparkles className="h-3.5 w-3.5 text-brand-soft" strokeWidth={1.75} />
+          <Sparkles className="h-3.5 w-3.5 text-signal-bright" strokeWidth={1.75} />
           Pro
         </button>
       </div>

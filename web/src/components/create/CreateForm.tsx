@@ -3,19 +3,26 @@ import { Sparkles, Lock, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useCreateUI } from "../../store/createUI";
 import { useGenerate } from "../../hooks/useGenerate";
+import { useLens } from "../../lib/useLens";
+import { mergeRefs, useSpecular } from "../../lib/useSpecular";
 import { formatDuration } from "../../lib/track";
+import { cn } from "../../lib/cn";
+import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
+import { useShuffledPicks } from "../../lib/useShuffledPicks";
 import JobProgress from "../JobProgress";
 import ErrorToast from "../ErrorToast";
 import Segmented from "./Segmented";
 import TickSlider from "./TickSlider";
 import Switch from "./Switch";
 import Select, { type SelectOption } from "./Select";
+import ComingSoon, { COMING_SOON_DETAIL, ComingSoonTag } from "./ComingSoon";
 import {
   BPM_MAX,
   BPM_MIN,
   GENRES,
   LENGTH_MAX_SECONDS,
   LENGTH_MIN_SECONDS,
+  LYRICS_MAX_LENGTH,
   MAX_INSTRUMENTS,
   MOODS,
   PROMPT_MAX_LENGTH,
@@ -28,39 +35,45 @@ type Complexity = "simple" | "advanced";
 type LyricMode = "vocal" | "instrumental" | "write" | "describe";
 
 /**
- * Controls with no field on GenerateRequest are rendered DISABLED with a
- * reason, not removed. The API accepts exactly:
+ * The API accepts exactly:
  *   prompt, genre, mood, bpm_min, bpm_max, instruments[<=10], vocal,
- *   length_seconds
- * Everything else here — lyrics, thinking, creativity, language, key, time
- * signature, seed, title — has no backend to carry it in Phase 1.
+ *   length_seconds, lyrics
+ *
+ * Everything else here — describe, thinking, creativity, language, key, time
+ * signature, seed, title — is rendered DISABLED with a visible "Coming soon"
+ * tag and a hover explanation, so the shape of the product stays legible
+ * without anyone mistaking an unbuilt control for a broken one. The tag and
+ * the tooltip both come from <ComingSoon>, which exists because a `title` on a
+ * disabled control never fires.
  */
-const COMING_SOON = "Coming later — the API has no field for this yet";
 
-const SUGGESTED_INSTRUMENTS = [
-  "piano",
-  "electric guitar",
-  "synth pads",
-  "strings",
-  "drums",
-  "bass",
-  "saxophone",
-  "vinyl crackle",
-];
+/** Eight at a time, drawn from the twenty in INSTRUMENT_SUGGESTIONS. */
+const VISIBLE_INSTRUMENTS = 8;
 
 const LANGUAGES: SelectOption[] = [{ value: "en", label: "English" }];
 const KEYS: SelectOption[] = [{ value: "auto", label: "Auto" }];
 
-const SECTION_LABEL = "text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-soft";
-const FIELD_LABEL = "text-[12px] font-medium text-ink-muted";
+const LYRICS_PLACEHOLDER = `[verse]
+Neon on the wet street, engine running low
+…
+
+[chorus]
+…`;
+
+const SECTION_LABEL = "eyebrow";
+const FIELD_LABEL = "text-xs font-medium text-ink-muted";
 
 export default function CreateForm() {
   const nav = useNavigate();
   const setPlayerHeight = useCreateUI((s) => s.setPlayerHeight);
 
   const [complexity, setComplexity] = useState<Complexity>("simple");
-  const [lyricMode, setLyricMode] = useState<LyricMode>("vocal");
+  // Write is the landing state: the lyrics editor is the reason most people
+  // open this page, and an empty box still means "you write the words", so
+  // defaulting here costs nothing for the users who never touch it.
+  const [lyricMode, setLyricMode] = useState<LyricMode>("write");
   const [prompt, setPrompt] = useState("");
+  const [lyrics, setLyrics] = useState("");
   const [genre, setGenre] = useState<Genre | "">("");
   const [mood, setMood] = useState<Mood | "">("");
   const [instruments, setInstruments] = useState<string[]>([]);
@@ -71,8 +84,18 @@ export default function CreateForm() {
   const [bpmMax, setBpmMax] = useState(130);
   const [dismissed, setDismissed] = useState(false);
 
+  // `exclude` keeps anything already on the track out of the suggestions,
+  // however it got there — chip tap or typed by hand.
+  const instrumentPicks = useShuffledPicks(INSTRUMENT_SUGGESTIONS, VISIBLE_INSTRUMENTS, {
+    exclude: instruments,
+  });
+
   const advanced = complexity === "advanced";
+  // Shared with the lens and specular refs below — this node both publishes its
+  // height to the docked Player and is the page's largest glass panel.
   const cardRef = useRef<HTMLDivElement>(null);
+  const lensRef = useLens<HTMLDivElement>("md", 24);
+  const specularRef = useSpecular<HTMLDivElement>();
 
   const { generate, stream, busy, error } = useGenerate({
     onCompleted: (trackId) => {
@@ -98,6 +121,10 @@ export default function CreateForm() {
   // It returns a clean 422 now, but a disabled button says it better than a
   // Pydantic error array does.
   const bpmInvalid = !tempoAuto && bpmMin > bpmMax;
+  // Write mode does NOT require lyrics. It is the default landing state, so
+  // gating the primary button on an empty box would greet everyone with a
+  // dead Create button — the exact complaint this page started with. An empty
+  // box sends null, which is the model's own "write the words yourself".
   const canSubmit = prompt.trim().length > 0 && !bpmInvalid && !busy;
 
   function addInstrument(raw: string) {
@@ -120,6 +147,11 @@ export default function CreateForm() {
       instruments,
       vocal: lyricMode !== "instrumental",
       length_seconds: lengthSeconds,
+      // Only in Write mode, and only if there is anything to send — "" and
+      // null both mean "you write the words", and null is what the API wants.
+      // Sent alongside vocal=false is a 422 by design; the mode check is what
+      // guarantees the two can never disagree.
+      lyrics: lyricMode === "write" && lyrics.trim() ? lyrics.trim() : null,
     };
     generate.mutate(body);
   }
@@ -134,18 +166,54 @@ export default function CreateForm() {
           value={lyricMode}
           onChange={setLyricMode}
           options={[
+            { value: "write", label: "Write" },
             { value: "vocal", label: "Sung" },
             { value: "instrumental", label: "Instrumental" },
-            { value: "write", label: "Write", disabled: true, title: COMING_SOON },
-            { value: "describe", label: "Describe", disabled: true, title: COMING_SOON },
+            { value: "describe", label: "Describe", disabled: true, title: COMING_SOON_DETAIL },
           ]}
         />
       </div>
-      <p className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-3 text-[12.5px] leading-relaxed text-ink-faint">
-        {lyricMode === "instrumental"
-          ? "Instrumental — no vocals. RITHM will compose music only."
-          : "RITHM writes the words to match your description. Supplying your own lyrics is coming later."}
-      </p>
+
+      {lyricMode === "write" ? (
+        <>
+          <textarea
+            value={lyrics}
+            maxLength={LYRICS_MAX_LENGTH}
+            onChange={(e) => setLyrics(e.target.value)}
+            aria-label="Your lyrics"
+            placeholder={LYRICS_PLACEHOLDER}
+            className="glass-input min-h-[160px] resize-y font-mono text-xs leading-relaxed"
+          />
+          <div className="mt-1 flex items-start justify-between gap-3">
+            <p className="text-2xs leading-snug text-ink-faint">
+              {/* ACE-Step parses these itself — we pass the text through
+                  untouched, so the tags are the user's to use or ignore. */}
+              {lyrics.trim() ? (
+                <>
+                  Use <code className="text-ink-muted">[verse]</code>,{" "}
+                  <code className="text-ink-muted">[chorus]</code> and{" "}
+                  <code className="text-ink-muted">[bridge]</code> to mark sections.
+                </>
+              ) : (
+                // The empty state has to say what happens if they just hit
+                // Create, because Write is where the page opens.
+                <>Leave this empty and RITHM will write the words for you.</>
+              )}
+            </p>
+            {lyrics.length > LYRICS_MAX_LENGTH - 200 && (
+              <span className="shrink-0 font-mono text-2xs tabular-nums text-ink-faint">
+                {lyrics.length} / {LYRICS_MAX_LENGTH}
+              </span>
+            )}
+          </div>
+        </>
+      ) : (
+        <p className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-3 text-xs leading-relaxed text-ink-faint">
+          {lyricMode === "instrumental"
+            ? "Instrumental — no vocals. RITHM will compose music only."
+            : "RITHM writes the words to match your description. Switch to Write to supply your own."}
+        </p>
+      )}
     </section>
   );
 
@@ -161,7 +229,7 @@ export default function CreateForm() {
         className="glass-input mt-2.5 min-h-[72px] resize-none leading-relaxed"
       />
       {prompt.length > 1800 && (
-        <p className="mt-1 text-right text-[11.5px] tabular-nums text-ink-faint">
+        <p className="mt-1 text-right font-mono text-2xs tabular-nums text-ink-faint">
           {prompt.length} / {PROMPT_MAX_LENGTH}
         </p>
       )}
@@ -169,7 +237,7 @@ export default function CreateForm() {
       <div className="mt-4">
         <div className="flex items-center justify-between">
           <span className={FIELD_LABEL}>Instruments</span>
-          <span className="text-[11.5px] tabular-nums text-ink-faint">
+          <span className="font-mono text-2xs tabular-nums text-ink-faint">
             {instruments.length} / {MAX_INSTRUMENTS}
           </span>
         </div>
@@ -179,7 +247,7 @@ export default function CreateForm() {
             {instruments.map((instrument) => (
               <span
                 key={instrument}
-                className="inline-flex items-center gap-1.5 rounded-full border border-brand/25 bg-brand/15 px-3 py-1 text-[12.5px] font-medium text-ink"
+                className="inline-flex items-center gap-1.5 rounded-full border border-signal/25 bg-signal/15 px-3 py-1 text-xs font-medium text-ink"
               >
                 {instrument}
                 <button
@@ -214,14 +282,25 @@ export default function CreateForm() {
           className="glass-input mt-2.5 disabled:opacity-40"
         />
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          {SUGGESTED_INSTRUMENTS.filter((i) => !instruments.includes(i)).map((instrument) => (
+        <div
+          className={cn(
+            "mt-3 flex min-h-[36px] flex-wrap gap-2",
+            instrumentPicks.phase === "out" && "chips-out",
+            instrumentPicks.phase === "in" && "chips-in",
+          )}
+        >
+          {instrumentPicks.picks.map((instrument) => (
             <button
-              key={instrument}
+              key={`${instrumentPicks.cycle}-${instrument}`}
               type="button"
-              onClick={() => addInstrument(instrument)}
+              onClick={() => {
+                addInstrument(instrument);
+                // `exclude` would drop it anyway, but replacing explicitly
+                // refills the slot instead of leaving the row a chip short.
+                instrumentPicks.replace(instrument);
+              }}
               disabled={instruments.length >= MAX_INSTRUMENTS}
-              className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1.5 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink disabled:opacity-30"
+              className="chip-swap rounded-full border border-white/10 bg-white/[0.035] min-h-[36px] px-3 text-xs font-medium text-ink-muted transition-colors hover:border-white/15 hover:bg-white/[0.07] hover:text-ink disabled:opacity-30"
             >
               {instrument}
             </button>
@@ -232,12 +311,16 @@ export default function CreateForm() {
   );
 
   return (
-    <div ref={cardRef} className="glass-panel w-full p-6">
+    <div
+      ref={mergeRefs(cardRef, lensRef, specularRef)}
+      className="lg-lens w-full p-4 sm:p-6"
+      style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
+    >
       <JobProgress stream={stream} />
       {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
 
       <div className="mb-5 flex items-center justify-between">
-        <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-ink">Create</h1>
+        <h1 className="font-display text-lg font-semibold text-ink sm:text-xl">Create</h1>
         <Segmented<Complexity>
           ariaLabel="Form complexity"
           value={complexity}
@@ -258,19 +341,25 @@ export default function CreateForm() {
 
               <span className={SECTION_LABEL}>More Options</span>
               <div className="mt-3 space-y-5 rounded-el border border-white/[0.07] bg-white/[0.02] p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-ink">Thinking</p>
-                    <p className="mt-0.5 text-[12px] leading-snug text-ink-faint">{COMING_SOON}.</p>
+                <ComingSoon>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-2 text-sm font-medium text-ink opacity-40">
+                        Thinking
+                        <ComingSoonTag />
+                      </p>
+                      <p className="mt-0.5 text-xs leading-snug text-ink-faint">
+                        Let the model plan the arrangement before it renders.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={false}
+                      onChange={() => undefined}
+                      ariaLabel="Thinking"
+                      disabled
+                    />
                   </div>
-                  <Switch
-                    checked={false}
-                    onChange={() => undefined}
-                    ariaLabel="Thinking"
-                    disabled
-                    title={COMING_SOON}
-                  />
-                </div>
+                </ComingSoon>
 
                 <div className="h-px bg-white/[0.06]" />
 
@@ -285,13 +374,13 @@ export default function CreateForm() {
                   tooltip="How long the generated track will be."
                 />
 
-                <TickSlider
-                  label="Creativity"
-                  value={50}
-                  onChange={() => undefined}
-                  disabled
-                  tooltip={COMING_SOON}
-                />
+                <ComingSoon>
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={`${FIELD_LABEL} opacity-40`}>Creativity</span>
+                    <ComingSoonTag />
+                  </div>
+                  <TickSlider label="Creativity" value={50} onChange={() => undefined} disabled />
+                </ComingSoon>
               </div>
             </div>
 
@@ -335,9 +424,9 @@ export default function CreateForm() {
                     type="button"
                     onClick={() => setTempoAuto((a) => !a)}
                     aria-pressed={tempoAuto}
-                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    className={`rounded-full border px-2.5 py-0.5 text-2xs font-medium transition-colors ${
                       tempoAuto
-                        ? "border-brand/30 bg-brand/15 text-ink"
+                        ? "border-signal/30 bg-signal/15 text-ink"
                         : "border-white/10 bg-white/[0.04] text-ink-muted hover:text-ink"
                     }`}
                   >
@@ -369,86 +458,92 @@ export default function CreateForm() {
                   />
                 </div>
                 {bpmInvalid && (
-                  <p className="mt-1.5 text-[12px] text-amber-300/90">
+                  <p className="mt-1.5 text-xs text-amber">
                     Minimum BPM must not exceed the maximum.
                   </p>
                 )}
               </div>
 
-              {/* Below here: no API field. Rendered so the shape of the product
-                  is legible, disabled so nobody submits into a 422. */}
-              <div>
-                <span className={FIELD_LABEL}>Language</span>
-                <div className="mt-1.5">
-                  <Select
-                    ariaLabel="Vocal language"
-                    value="en"
-                    onChange={() => undefined}
-                    options={LANGUAGES}
-                    disabled
-                    title={COMING_SOON}
-                  />
+              {/* Below here: no API field. Rendered so the shape of the
+                  product is legible, disabled so nobody submits into a 422,
+                  and tagged so nobody reports them as broken. */}
+              <ComingSoon>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`${FIELD_LABEL} opacity-40`}>Language</span>
+                  <ComingSoonTag />
                 </div>
-              </div>
+                <Select
+                  ariaLabel="Vocal language"
+                  value="en"
+                  onChange={() => undefined}
+                  options={LANGUAGES}
+                  disabled
+                />
+              </ComingSoon>
 
-              <div>
-                <span className={FIELD_LABEL}>Key</span>
-                <div className="mt-1.5">
-                  <Select
-                    ariaLabel="Key and scale"
-                    value="auto"
-                    onChange={() => undefined}
-                    options={KEYS}
-                    disabled
-                    title={COMING_SOON}
-                  />
+              <ComingSoon>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`${FIELD_LABEL} opacity-40`}>Key</span>
+                  <ComingSoonTag />
                 </div>
-              </div>
+                <Select
+                  ariaLabel="Key and scale"
+                  value="auto"
+                  onChange={() => undefined}
+                  options={KEYS}
+                  disabled
+                />
+              </ComingSoon>
 
-              <div>
-                <span className={FIELD_LABEL}>Time signature</span>
-                <div className="mt-1.5">
-                  <Segmented<string>
-                    ariaLabel="Time signature"
-                    size="sm"
-                    value="auto"
-                    onChange={() => undefined}
-                    options={[
-                      { value: "auto", label: "Auto", disabled: true, title: COMING_SOON },
-                      { value: "4", label: "4/4", disabled: true, title: COMING_SOON },
-                      { value: "3", label: "3/4", disabled: true, title: COMING_SOON },
-                    ]}
-                  />
+              <ComingSoon>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`${FIELD_LABEL} opacity-40`}>Time signature</span>
+                  <ComingSoonTag />
                 </div>
-              </div>
+                <Segmented<string>
+                  ariaLabel="Time signature"
+                  size="sm"
+                  value="auto"
+                  onChange={() => undefined}
+                  options={[
+                    { value: "auto", label: "Auto", disabled: true },
+                    { value: "4", label: "4/4", disabled: true },
+                    { value: "3", label: "3/4", disabled: true },
+                  ]}
+                />
+              </ComingSoon>
 
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className={FIELD_LABEL}>Seed</span>
-                  <span className="flex items-center gap-1.5 text-[11px] text-ink-faint">
+              <ComingSoon label="Coming soon — seeds are minted server-side for now">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className={`${FIELD_LABEL} opacity-40`}>Seed</span>
+                    <ComingSoonTag />
+                  </span>
+                  <span className="flex items-center gap-1.5 text-2xs text-ink-faint">
                     <Lock className="h-3 w-3" strokeWidth={2} />
                     Lock
                   </span>
                 </div>
                 <input
                   disabled
-                  title={COMING_SOON}
                   aria-label="Seed"
                   placeholder="Minted server-side"
-                  className="glass-input mt-1.5 tabular-nums disabled:opacity-40"
+                  className="glass-input tabular-nums disabled:opacity-40"
                 />
-              </div>
+              </ComingSoon>
 
-              <div>
-                <span className={FIELD_LABEL}>Song title</span>
+              <ComingSoon>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={`${FIELD_LABEL} opacity-40`}>Song title</span>
+                  <ComingSoonTag />
+                </div>
                 <input
                   disabled
-                  title={COMING_SOON}
                   aria-label="Song title"
                   placeholder="Named from your prompt"
-                  className="glass-input mt-1.5 disabled:opacity-40"
+                  className="glass-input disabled:opacity-40"
                 />
-              </div>
+              </ComingSoon>
             </aside>
           </div>
         </div>
@@ -477,7 +572,7 @@ export default function CreateForm() {
             type="button"
             onClick={onCreate}
             disabled={!canSubmit}
-            className="glass-btn glass-btn-solid w-full rounded-el px-6 py-3 text-[14.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            className="glass-btn glass-btn-solid min-h-[48px] w-full rounded-el px-6 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? "Creating…" : "Create"}
           </button>
