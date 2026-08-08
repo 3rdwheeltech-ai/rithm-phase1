@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -11,6 +11,11 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import GlassFilters from "./components/GlassFilters";
 import StudioField from "./components/StudioField";
 import { useAuth } from "./store/auth";
+
+// Neither route is on the path to making a track, and both carry a catalogue of
+// sample content the average session never opens. Split out, like AvatarPanel.
+const Discover = lazy(() => import("./pages/Discover"));
+const AiTools = lazy(() => import("./pages/AiTools"));
 
 /**
  * Keeps signed-in users out of the auth pages. Reads `status`, not the token:
@@ -70,6 +75,24 @@ export default function App() {
           <Route path="/create" element={<Create />} />
           <Route path="/library" element={<Library />} />
           <Route path="/track/:id" element={<TrackDetail />} />
+          {/* No fallback markup: these chunks resolve in a frame or two on a
+              warm connection, and a skeleton that flashes is worse than none. */}
+          <Route
+            path="/discover"
+            element={
+              <Suspense fallback={null}>
+                <Discover />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/tools"
+            element={
+              <Suspense fallback={null}>
+                <AiTools />
+              </Suspense>
+            }
+          />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

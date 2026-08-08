@@ -75,6 +75,19 @@ export function trackTitle(track: Pick<TrackSummary, "prompt">): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+/**
+ * The one-line summary under a card title.
+ *
+ * Genre and BPM are both nullable, and a track with neither still needs a
+ * second line — "Vocal"/"Instrumental" is the one fact every track has.
+ */
+export function trackSubtitle(
+  track: Pick<TrackSummary, "genre" | "bpm" | "vocal">,
+): string {
+  const parts = [track.genre, track.bpm ? `${track.bpm} BPM` : null].filter(Boolean);
+  return parts.length > 0 ? parts.join(" • ") : track.vocal ? "Vocal" : "Instrumental";
+}
+
 /** The comma-separated fragments of a prompt, as style chips. */
 export function trackTags(track: Pick<TrackSummary, "prompt">, limit = 6): string[] {
   return track.prompt

@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Library as LibraryIcon, Play, Pause, Trash2, Music } from "lucide-react";
+import { Library as LibraryIcon, Music } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useTracks } from "../hooks/useTracks";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
 import { usePlayer } from "../store/player";
-import { formatDuration, trackTitle } from "../lib/track";
+import { coverGradient } from "../lib/covers";
+import { formatDuration, trackSubtitle, trackTitle } from "../lib/track";
 import ErrorToast from "../components/ErrorToast";
+import TrackCard from "../components/TrackCard";
 import CountUp from "../components/reactbits/CountUp";
 
 export default function Library() {
@@ -29,7 +31,7 @@ export default function Library() {
         <ErrorToast error={deleteTrack.error} onDismiss={() => setDismissed(true)} />
       )}
 
-      <div className="mx-auto w-full max-w-[860px] animate-fade-in">
+      <div className="mx-auto w-full max-w-[1100px] animate-fade-in">
         <div className="mb-6 flex items-center gap-3">
           <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-el border border-signal/25 bg-signal/15 text-signal-bright">
             <LibraryIcon className="h-5 w-5" strokeWidth={1.75} />
@@ -50,9 +52,11 @@ export default function Library() {
         </div>
 
         {isLoading ? (
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="surface h-[112px] animate-pulse opacity-50" />
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-5">
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+              // Proportional, not a fixed height: the card is a square cover
+              // plus two lines, so it grows with the column.
+              <div key={i} className="surface aspect-[3/4] animate-pulse opacity-50" />
             ))}
           </div>
         ) : tracks.length === 0 ? (
@@ -74,71 +78,31 @@ export default function Library() {
           </div>
         ) : (
           <>
-            <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
+            <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-5">
               {tracks.map((track) => {
                 const active = currentId === track.id;
                 return (
-                  <li
-                    key={track.id}
-                    // Opaque, not glass: thirty backdrop-filter layers in a
-                    // scrolling grid is what makes a list feel cheap.
-                    className="surface surface-hover group/card p-4"
-                    style={{ "--r": "16px", "--pad": "16px" } as React.CSSProperties}
-                  >
-                    <div className="flex items-start gap-3">
-                      <button
-                        type="button"
-                        // The whole loaded library becomes the queue, so next
-                        // and previous walk it in the order shown here.
-                        onClick={() =>
-                          active && isPlaying ? setPlaying(false) : play(track, tracks)
-                        }
-                        aria-label={`${active && isPlaying ? "Pause" : "Play"} ${trackTitle(track)}`}
-                        className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
-                          active
-                            ? "border-signal/50 bg-signal/25 text-ink"
-                            : "border-white/10 bg-signal/15 text-signal-bright group-hover/card:bg-signal/25"
-                        }`}
-                      >
-                        {active && isPlaying ? (
-                          <Pause className="h-4 w-4" strokeWidth={2} fill="currentColor" />
-                        ) : (
-                          <Play className="ml-0.5 h-4 w-4" strokeWidth={2} fill="currentColor" />
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => nav(`/track/${track.id}`)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <p className="truncate text-sm font-semibold text-ink">
-                          {trackTitle(track)}
-                        </p>
-                        <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-ink-faint">
-                          {track.prompt}
-                        </p>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDismissed(false);
-                          deleteTrack.mutate(track.id);
-                        }}
-                        title="Delete"
-                        aria-label={`Delete ${trackTitle(track)}`}
-                        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-control text-ink-faint transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 lg:opacity-0 lg:group-hover/card:opacity-100"
-                      >
-                        <Trash2 className="h-4 w-4" strokeWidth={2} />
-                      </button>
-                    </div>
-
-                    <div className="mt-3 flex items-center gap-2.5 font-mono text-2xs tabular-nums text-ink-faint">
-                      <span>{formatDuration(track.length_seconds)}</span>
-                      {track.genre && <span>{track.genre}</span>}
-                      {track.bpm !== null && <span>{track.bpm} BPM</span>}
-                    </div>
+                  <li key={track.id}>
+                    <TrackCard
+                      title={trackTitle(track)}
+                      // The prompt no longer has a line of its own under album
+                      // art, so it keeps the tooltip it always had.
+                      titleTooltip={track.prompt}
+                      subtitle={trackSubtitle(track)}
+                      gradient={coverGradient(track.id)}
+                      duration={formatDuration(track.length_seconds)}
+                      playing={active && isPlaying}
+                      // The whole loaded library becomes the queue, so next and
+                      // previous walk it in the order shown here.
+                      onPlay={() =>
+                        active && isPlaying ? setPlaying(false) : play(track, tracks)
+                      }
+                      onOpen={() => nav(`/track/${track.id}`)}
+                      onDelete={() => {
+                        setDismissed(false);
+                        deleteTrack.mutate(track.id);
+                      }}
+                    />
                   </li>
                 );
               })}

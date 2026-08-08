@@ -9,7 +9,7 @@ import { formatDuration, trackTitle } from "../lib/track";
 import JobProgress from "../components/JobProgress";
 import ErrorToast from "../components/ErrorToast";
 import Segmented from "../components/create/Segmented";
-import { coverGradient } from "../components/RecentCreations";
+import { coverGradient } from "../lib/covers";
 import { DELTA_COMMAND_MAX_LENGTH, type RefinementMode } from "../types/api";
 
 const KIND_LABELS: Record<string, string> = {

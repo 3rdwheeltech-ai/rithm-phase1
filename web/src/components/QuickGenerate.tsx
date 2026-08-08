@@ -5,6 +5,7 @@ import Segmented from "./create/Segmented";
 import TickSlider from "./create/TickSlider";
 import JobProgress from "./JobProgress";
 import ErrorToast from "./ErrorToast";
+import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "./SpecularButton";
 import { useGenerate } from "../hooks/useGenerate";
 import { cn } from "../lib/cn";
 import { useLens } from "../lib/useLens";
@@ -133,16 +134,31 @@ export default function QuickGenerate() {
           </div>
 
           <div className="mt-5 flex flex-col items-center gap-2">
-            <div className={`w-full max-w-[340px] ${busy ? "" : "ai-frame-btn"}`}>
-              <button
-                type="button"
-                disabled={!canGenerate}
-                onClick={onGenerate}
-                className="glass-btn glass-btn-solid min-h-[48px] w-full rounded-el px-6 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {busy ? "Generating…" : "Generate"}
-              </button>
-            </div>
+            {/* The rim is the button. `ai-frame-btn` used to draw a static teal
+                hairline here and the two would only fight over the same edge. */}
+            <SpecularButton
+              size="lg"
+              radius={16}
+              tint="#ffffff"
+              tintOpacity={0}
+              blur={5}
+              textColor="#f5f5f5"
+              lineColor={SPECULAR_LINE}
+              baseColor={SPECULAR_BASE}
+              intensity={2.5}
+              shineSize={39}
+              shineFade={32}
+              thickness={2}
+              speed={1.3}
+              followMouse={false}
+              proximity={140}
+              autoAnimate={false}
+              disabled={!canGenerate}
+              onClick={onGenerate}
+              className="w-full max-w-[340px]"
+            >
+              {busy ? "Generating…" : "Generate"}
+            </SpecularButton>
           </div>
         </div>
       </div>

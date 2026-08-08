@@ -11,6 +11,7 @@ import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 import { useShuffledPicks } from "../../lib/useShuffledPicks";
 import JobProgress from "../JobProgress";
 import ErrorToast from "../ErrorToast";
+import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "../SpecularButton";
 import Segmented from "./Segmented";
 import TickSlider from "./TickSlider";
 import Switch from "./Switch";
@@ -567,16 +568,30 @@ export default function CreateForm() {
       )}
 
       <div className="flex flex-col items-center gap-2">
-        <div className={`w-full max-w-[340px] ${busy ? "" : "ai-frame-btn"}`}>
-          <button
-            type="button"
-            onClick={onCreate}
-            disabled={!canSubmit}
-            className="glass-btn glass-btn-solid min-h-[48px] w-full rounded-el px-6 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {busy ? "Creating…" : "Create"}
-          </button>
-        </div>
+        {/* Same treatment as Home's Generate — the two are the same action. */}
+        <SpecularButton
+          size="lg"
+          radius={16}
+          tint="#ffffff"
+          tintOpacity={0}
+          blur={5}
+          textColor="#f5f5f5"
+          lineColor={SPECULAR_LINE}
+          baseColor={SPECULAR_BASE}
+          intensity={2.5}
+          shineSize={39}
+          shineFade={32}
+          thickness={2}
+          speed={1.3}
+          followMouse={false}
+          proximity={140}
+          autoAnimate={false}
+          disabled={!canSubmit}
+          onClick={onCreate}
+          className="w-full max-w-[340px]"
+        >
+          {busy ? "Creating…" : "Create"}
+        </SpecularButton>
       </div>
     </div>
   );

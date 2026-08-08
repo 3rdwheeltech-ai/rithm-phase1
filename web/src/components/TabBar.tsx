@@ -12,10 +12,14 @@ interface Tab {
   to: string;
 }
 
+// Four destinations plus Account is the most this bar holds at 375px. Discover
+// earns a slot because browsing is a destination in every music app; AI Tools
+// is a place you go on purpose, so it lives in the account sheet instead.
 const TABS: Tab[] = [
   { label: "Home", Icon: Home, to: "/" },
   { label: "Create", Icon: Plus, to: "/create" },
   { label: "Library", Icon: Library, to: "/library" },
+  { label: "Discover", Icon: Compass, to: "/discover" },
 ];
 
 /**
@@ -97,23 +101,25 @@ export default function TabBar({
 
           <div className="my-1 h-px bg-white/[0.07]" />
 
+          <button
+            type="button"
+            onClick={() => nav("/tools")}
+            className="r-inner flex h-11 w-full items-center gap-3 px-2 text-sm font-medium text-ink-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
+          >
+            <Sparkles className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            AI Tools
+          </button>
+
           {/* Shown disabled rather than hidden — the same decision the sidebar made. */}
-          {[
-            { label: "AI Tools", Icon: Sparkles },
-            { label: "Discover", Icon: Compass },
-            { label: "Settings", Icon: Settings },
-          ].map(({ label, Icon }) => (
-            <button
-              key={label}
-              type="button"
-              disabled
-              title={`${label} — coming soon`}
-              className="r-inner flex h-11 w-full cursor-not-allowed items-center gap-3 px-2 text-sm font-medium text-ink-faint opacity-40"
-            >
-              <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
-              {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            disabled
+            title="Settings — coming soon"
+            className="r-inner flex h-11 w-full cursor-not-allowed items-center gap-3 px-2 text-sm font-medium text-ink-faint opacity-40"
+          >
+            <Settings className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            Settings
+          </button>
 
           <div className="my-1 h-px bg-white/[0.07]" />
 

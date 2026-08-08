@@ -26,7 +26,7 @@ import { formatDuration, trackTags, trackTitle } from "../lib/track";
 import { useCreateUI } from "../store/createUI";
 import { hasNext, hasPrevious, usePlayer } from "../store/player";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
-import { coverGradient } from "./RecentCreations";
+import { coverGradient } from "../lib/covers";
 import type { TrackDetail } from "../types/api";
 
 const SPEEDS = [1, 1.25, 1.5, 2] as const;

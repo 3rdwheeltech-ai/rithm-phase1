@@ -14,14 +14,15 @@ interface NavItem {
   to?: string;
 }
 
-// Home, Create and Library are live; AI Tools and Discover are visual
-// placeholders (no routes yet).
+// All five are live. AI Tools and Discover are preview pages — the content is
+// sample data and every control says so, which is the honest version of the
+// dead nav rows they used to be. The `to`-less branch below stays for Settings.
 const NAV: NavItem[] = [
   { label: "Home", Icon: Home, to: "/" },
   { label: "Create", Icon: Plus, to: "/create" },
   { label: "Library", Icon: Library, to: "/library" },
-  { label: "AI Tools", Icon: Sparkles },
-  { label: "Discover", Icon: Compass },
+  { label: "AI Tools", Icon: Sparkles, to: "/tools" },
+  { label: "Discover", Icon: Compass, to: "/discover" },
 ];
 
 /**
