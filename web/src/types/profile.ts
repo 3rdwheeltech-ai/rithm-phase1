@@ -92,3 +92,48 @@ export interface ProfilePatch {
   /** The server stamps `completed_at` itself; there is no way to supply one. */
   onboarding_action?: "complete" | "skip";
 }
+
+export const EMPTY_PREFERENCES: Preferences = {
+  experience_level: null,
+  genres: [],
+  moods: [],
+  primary_intent: null,
+  typical_length: null,
+};
+
+/**
+ * Fill in anything the server did not send.
+ *
+ * The API normalizes the document too, so in steady state this is a no-op. It
+ * exists for the DEPLOY WINDOW: deploy-web (S3 sync + invalidate) finishes
+ * minutes before deploy-api (image build, migration task, services-stable), so
+ * there is a stretch where this bundle is talking to an API that predates
+ * `profile` entirely. Without this, `data.profile.onboarding` throws in render
+ * and every signed-in user gets a white screen until the API catches up.
+ *
+ * A MISSING `onboarding` object and an explicit `completed_at: null` mean
+ * opposite things, so they must not collapse into each other:
+ *
+ *   onboarding absent  -> old API, we do not know  -> sentinel, do NOT redirect
+ *   completed_at null  -> new API, never onboarded -> null, DO redirect
+ *
+ * Getting that backwards either white-screens the app or marches every existing
+ * user back through onboarding, which is why `??` alone is not enough here.
+ */
+const ONBOARDING_UNKNOWN = "";
+
+export function withProfileDefaults(raw: Partial<Profile> | undefined | null): Profile {
+  const onboarding = raw?.onboarding;
+
+  return {
+    version: raw?.version ?? PROFILE_VERSION,
+    display_name: raw?.display_name ?? "",
+    onboarding: onboarding
+      ? {
+          completed_at: onboarding.completed_at ?? null,
+          skipped: onboarding.skipped ?? false,
+        }
+      : { completed_at: ONBOARDING_UNKNOWN, skipped: false },
+    preferences: { ...EMPTY_PREFERENCES, ...(raw?.preferences ?? {}) },
+  };
+}

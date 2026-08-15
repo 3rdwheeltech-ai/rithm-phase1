@@ -6,6 +6,7 @@ import {
   PRIMARY_INTENT_LABELS,
   TYPICAL_LENGTHS,
   TYPICAL_LENGTH_LABELS,
+  withProfileDefaults,
 } from "./profile";
 import { PREFERENCE_QUESTIONS } from "../lib/preferences";
 
@@ -61,5 +62,46 @@ describe("preference questions", () => {
     for (const question of PREFERENCE_QUESTIONS) {
       expect(question.max === undefined).toBe(question.single);
     }
+  });
+});
+
+describe("withProfileDefaults", () => {
+  it("survives an API response that predates the profile field", () => {
+    // The deploy window: new bundle, old API. Must not throw, and must not
+    // shove an existing user into onboarding.
+    const profile = withProfileDefaults(undefined);
+
+    expect(profile.preferences).toEqual({
+      experience_level: null,
+      genres: [],
+      moods: [],
+      primary_intent: null,
+      typical_length: null,
+    });
+    expect(profile.onboarding.completed_at).not.toBeNull();
+    expect(profile.display_name).toBe("");
+  });
+
+  it("leaves a complete document untouched", () => {
+    const real = {
+      version: 1,
+      display_name: "Ada",
+      onboarding: { completed_at: "2026-08-15T10:04:11Z", skipped: false },
+      preferences: {
+        experience_level: "pro" as const,
+        genres: ["Lo-Fi" as const],
+        moods: [],
+        primary_intent: null,
+        typical_length: null,
+      },
+    };
+    expect(withProfileDefaults(real)).toEqual(real);
+  });
+
+  it("still routes a genuinely new user into onboarding", () => {
+    const profile = withProfileDefaults({
+      onboarding: { completed_at: null, skipped: false },
+    });
+    expect(profile.onboarding.completed_at).toBeNull();
   });
 });

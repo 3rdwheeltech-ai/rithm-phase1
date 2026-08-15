@@ -1,6 +1,6 @@
 import { decodeJwt } from "./jwt";
 import { useAuth, type AuthUser } from "../store/auth";
-import type { MeResponse, Profile, ProfilePatch } from "../types/profile";
+import { withProfileDefaults, type MeResponse, type Profile, type ProfilePatch } from "../types/profile";
 
 /**
  * The API base is a RELATIVE path and nothing else.
@@ -236,9 +236,16 @@ export async function signup(payload: {
 
 // ── Profile ────────────────────────────────────────────────────────────────
 
-/** Identity plus the profile document, in one round trip. */
-export function getMe(): Promise<MeResponse> {
-  return request<MeResponse>("/me");
+/**
+ * Identity plus the profile document, in one round trip.
+ *
+ * Defaulted at the boundary so no caller has to guard: an API that predates
+ * `profile` (the deploy window, see withProfileDefaults) still yields a
+ * complete object rather than throwing in someone's render.
+ */
+export async function getMe(): Promise<MeResponse> {
+  const body = await request<MeResponse>("/me");
+  return { ...body, profile: withProfileDefaults(body.profile) };
 }
 
 /**
