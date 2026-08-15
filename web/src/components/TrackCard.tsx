@@ -1,5 +1,6 @@
 import { Play, Pause, ArrowUpRight, Trash2 } from "lucide-react";
 import { cn } from "../lib/cn";
+import CoverArt from "./CoverArt";
 
 /**
  * The album card, used by Home's carousel, the Library grid and Discover.
@@ -16,6 +17,7 @@ import { cn } from "../lib/cn";
 export default function TrackCard({
   title,
   subtitle,
+  seed,
   gradient,
   duration,
   onPlay,
@@ -27,6 +29,8 @@ export default function TrackCard({
 }: {
   title: string;
   subtitle: string;
+  /** Track id — picks the cover photograph. */
+  seed: string;
   /** Tailwind gradient stops, from `coverGradient` or `demoGradient`. */
   gradient: string;
   /** Pre-formatted — callers own the units. */
@@ -43,7 +47,7 @@ export default function TrackCard({
   return (
     <div className={cn("group/card surface overflow-hidden p-2.5", className)}>
       <div className="relative aspect-square overflow-hidden rounded-control">
-        <div className={`h-full w-full bg-gradient-to-br ${gradient}`} />
+        <CoverArt seed={seed} gradient={gradient} className="h-full w-full" />
 
         <span className="absolute bottom-2 right-2 rounded-full bg-black/55 px-2 py-0.5 font-mono text-2xs font-medium tabular-nums text-ink backdrop-blur-sm">
           {duration}

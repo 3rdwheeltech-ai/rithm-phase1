@@ -13,6 +13,7 @@ import {
   type DiscoverFilter,
 } from "../lib/discoverData";
 import ComingSoonDialog from "../components/ComingSoonDialog";
+import CoverArt from "../components/CoverArt";
 import TrackCard from "../components/TrackCard";
 
 /**
@@ -157,8 +158,10 @@ export default function Discover() {
             ref={mergeRefs(lensRef, specularRef)}
             className="quick-surface flex items-center gap-4 p-4 sm:gap-6 sm:p-5"
           >
-            <div
-              className={`h-20 w-20 flex-shrink-0 rounded-el bg-gradient-to-br sm:h-[104px] sm:w-[104px] ${FEATURED.gradient}`}
+            <CoverArt
+              seed={FEATURED.id}
+              gradient={FEATURED.gradient}
+              className="h-20 w-20 flex-shrink-0 rounded-el sm:h-[104px] sm:w-[104px]"
             />
             <div className="min-w-0 flex-1">
               <span className="eyebrow">Featured</span>
@@ -189,6 +192,7 @@ export default function Discover() {
               className="w-[46vw] max-w-[180px] flex-shrink-0 snap-start"
               title={track.title}
               subtitle={`${track.artist} • ${formatCount(track.plays)} plays`}
+              seed={track.id}
               gradient={track.gradient}
               duration={formatDuration(track.lengthSeconds)}
               onPlay={() => setComingSoon("Community playback")}
@@ -204,6 +208,7 @@ export default function Discover() {
                 className="w-[46vw] max-w-[180px] flex-shrink-0 snap-start"
                 title={track.title}
                 subtitle={`${track.artist} • ${formatCount(track.plays)} plays`}
+                seed={track.id}
                 gradient={track.gradient}
                 duration={formatDuration(track.lengthSeconds)}
                 onPlay={() => setComingSoon("Community playback")}
@@ -218,8 +223,10 @@ export default function Discover() {
               key={artist.id}
               className="w-[38vw] max-w-[150px] flex-shrink-0 snap-start text-center"
             >
-              <div
-                className={`mx-auto aspect-square w-full rounded-full bg-gradient-to-br ${artist.gradient}`}
+              <CoverArt
+                seed={artist.id}
+                gradient={artist.gradient}
+                className="mx-auto aspect-square w-full rounded-full"
               />
               <p className="mt-3 truncate text-sm font-medium text-ink">{artist.name}</p>
               <p className="mt-0.5 truncate text-xs text-ink-muted">

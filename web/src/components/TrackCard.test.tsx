@@ -6,6 +6,7 @@ import TrackCard from "./TrackCard";
 const BASE = {
   title: "Midnight Bloom",
   subtitle: "lo-fi • 88 BPM",
+  seed: "0192f0a1-7c3e-7b21-9d44-2f18ab5c0e31",
   gradient: "from-teal-400/45 to-slate-900/65",
   duration: "1:30",
 };

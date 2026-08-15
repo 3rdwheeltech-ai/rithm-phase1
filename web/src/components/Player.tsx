@@ -26,7 +26,7 @@ import { formatDuration, trackTags, trackTitle } from "../lib/track";
 import { useCreateUI } from "../store/createUI";
 import { hasNext, hasPrevious, usePlayer } from "../store/player";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
-import { coverGradient } from "../lib/covers";
+import CoverArt from "./CoverArt";
 import type { TrackDetail } from "../types/api";
 
 const SPEEDS = [1, 1.25, 1.5, 2] as const;
@@ -536,12 +536,7 @@ export default function Player({
               aria-label={`Open player for ${trackTitle(track)}`}
               className="flex min-w-0 flex-1 items-center gap-3 text-left"
             >
-              <span
-                className={cn(
-                  "h-10 w-10 shrink-0 rounded-full bg-gradient-to-br",
-                  coverGradient(track.id),
-                )}
-              />
+              <CoverArt seed={track.id} className="h-10 w-10 shrink-0 rounded-full" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold text-ink">
                   {trackTitle(track)}
@@ -601,11 +596,9 @@ export default function Player({
                 <ChevronDown className="h-5 w-5" strokeWidth={2} />
               </button>
 
-              <div
-                className={cn(
-                  "mx-auto aspect-square w-full max-w-[300px] shrink-0 rounded-card bg-gradient-to-br",
-                  coverGradient(track.id),
-                )}
+              <CoverArt
+                seed={track.id}
+                className="mx-auto aspect-square w-full max-w-[300px] shrink-0 rounded-card"
               />
 
               <h2 className="mt-6 text-lg font-semibold text-ink">{trackTitle(track)}</h2>

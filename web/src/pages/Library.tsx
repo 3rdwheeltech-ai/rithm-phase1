@@ -89,6 +89,7 @@ export default function Library() {
                       // art, so it keeps the tooltip it always had.
                       titleTooltip={track.prompt}
                       subtitle={trackSubtitle(track)}
+                      seed={track.id}
                       gradient={coverGradient(track.id)}
                       duration={formatDuration(track.length_seconds)}
                       playing={active && isPlaying}

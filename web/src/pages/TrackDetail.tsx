@@ -9,7 +9,7 @@ import { formatDuration, trackTitle } from "../lib/track";
 import JobProgress from "../components/JobProgress";
 import ErrorToast from "../components/ErrorToast";
 import Segmented from "../components/create/Segmented";
-import { coverGradient } from "../lib/covers";
+import CoverArt from "../components/CoverArt";
 import { DELTA_COMMAND_MAX_LENGTH, type RefinementMode } from "../types/api";
 
 const KIND_LABELS: Record<string, string> = {
@@ -73,10 +73,11 @@ export default function TrackDetail() {
         </button>
 
         <div className="surface flex flex-col gap-5 p-4 sm:flex-row sm:p-6">
-          <div
+          <CoverArt
+            seed={track.id}
             // Capped and centred on a phone: a full-bleed square pushes the
             // title and the controls below the fold on a 390px screen.
-            className={`mx-auto aspect-square w-full max-w-[220px] flex-shrink-0 rounded-card bg-gradient-to-br sm:mx-0 sm:h-[160px] sm:w-[160px] sm:max-w-none ${coverGradient(track.id)}`}
+            className="mx-auto aspect-square w-full max-w-[220px] flex-shrink-0 rounded-card sm:mx-0 sm:h-[160px] sm:w-[160px] sm:max-w-none"
           />
 
           <div className="min-w-0 flex-1">

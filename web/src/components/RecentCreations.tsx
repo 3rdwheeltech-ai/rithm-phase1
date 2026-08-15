@@ -100,6 +100,7 @@ export default function RecentCreations() {
                 title={trackTitle(track)}
                 titleTooltip={track.prompt}
                 subtitle={trackSubtitle(track)}
+                seed={track.id}
                 gradient={coverGradient(track.id)}
                 duration={formatDuration(track.length_seconds)}
                 playing={active && isPlaying}
