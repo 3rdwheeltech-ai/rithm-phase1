@@ -33,9 +33,11 @@ export default function Signup() {
         phone_number: phone,
         consent_version: CONSENT_VERSION,
       });
-      // Auto-login straight into the studio after signup.
+      // Auto-login, then straight into the preferences questions. The
+      // onboarding gate on the studio shell would route them there anyway;
+      // going direct saves a render and a redirect.
       await login(email, password);
-      nav("/", { replace: true });
+      nav("/onboarding", { replace: true });
     } catch (e) {
       setErr((e as Error).message);
     } finally {

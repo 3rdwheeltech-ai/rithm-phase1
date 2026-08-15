@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "../lib/cn";
+import { useMe } from "../hooks/useMe";
 import { decodeJwt } from "../lib/jwt";
 import { DESKTOP_QUERY, useMediaQuery } from "../lib/useMediaQuery";
 import { useAuth } from "../store/auth";
@@ -26,15 +27,27 @@ const AvatarPanel = lazy(() => import("./AvatarPanel"));
  * and cut playback mid-track. Its wrapper therefore keeps a fixed position among
  * its siblings at every breakpoint, and only its classes vary.
  *
- * The user comes from the id token, not from a GET /me round trip — everything
- * the UI needs about them is already in the token the client is holding.
+ * The display name prefers the PROFILE over the id token. Settings writes
+ * `profile.display_name`, and Phase 1 deliberately does not push that back to
+ * the Cognito `name` attribute (it needs admin_update_user_attributes and a
+ * grant the scoped dev IAM user does not hold, and the claim would only change
+ * on the next token anyway) — so a token-first order would leave someone who
+ * just renamed themselves staring at the old name until they re-login. The
+ * claim stays as the fallback for rows created by shared/auth.py's lazy insert,
+ * which never sees a name.
  */
 export default function Layout({ children }: { children: ReactNode }) {
   const nav = useNavigate();
   const logout = useAuth((s) => s.logout);
   const idToken = useAuth((s) => s.idToken);
   const user = useAuth((s) => s.user);
-  const name = (decodeJwt(idToken)?.name ?? "").trim() || null;
+  // No extra request: Layout renders inside RequireOnboarding, which has
+  // already resolved this query.
+  const { data: me } = useMe();
+  const name =
+    (me?.profile.display_name ?? "").trim() ||
+    (decodeJwt(idToken)?.name ?? "").trim() ||
+    null;
 
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const hasTrack = usePlayer((s) => s.track !== null);

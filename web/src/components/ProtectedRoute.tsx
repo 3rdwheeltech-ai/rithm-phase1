@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../store/auth";
+import RouteSpinner from "./RouteSpinner";
 
 /**
  * Renders children only for an authenticated session.
@@ -15,12 +16,7 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   if (status === "loading") {
-    return (
-      <div className="flex min-h-[100dvh] items-center justify-center" aria-busy="true">
-        <span className="sr-only">Restoring your session…</span>
-        <span className="h-6 w-6 rounded-full border-2 border-white/15 border-t-signal-bright motion-safe:animate-spin" />
-      </div>
-    );
+    return <RouteSpinner label="Restoring your session…" />;
   }
 
   if (status === "anon") {

@@ -2,12 +2,15 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import Onboarding from "./pages/Onboarding";
 import Home from "./pages/Home";
 import Create from "./pages/Create";
 import Library from "./pages/Library";
+import Settings from "./pages/Settings";
 import TrackDetail from "./pages/TrackDetail";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
+import RequireOnboarding from "./components/RequireOnboarding";
 import GlassFilters from "./components/GlassFilters";
 import StudioField from "./components/StudioField";
 import { useAuth } from "./store/auth";
@@ -60,20 +63,35 @@ export default function App() {
             </GuestOnly>
           }
         />
+        {/* First-run preferences. Authed, but deliberately OUTSIDE the shell
+            and outside RequireOnboarding — a guard cannot bounce a user to a
+            route it also guards. It renders the auth-shell frame instead, the
+            same one Login and Signup use. */}
+        <Route
+          path="/onboarding"
+          element={
+            <ProtectedRoute>
+              <Onboarding />
+            </ProtectedRoute>
+          }
+        />
         {/* Authed shell: Layout mounts once and stays mounted across these
             routes, so audio keeps playing on navigation. */}
         <Route
           element={
             <ProtectedRoute>
-              <Layout>
-                <Outlet />
-              </Layout>
+              <RequireOnboarding>
+                <Layout>
+                  <Outlet />
+                </Layout>
+              </RequireOnboarding>
             </ProtectedRoute>
           }
         >
           <Route path="/" element={<Home />} />
           <Route path="/create" element={<Create />} />
           <Route path="/library" element={<Library />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/track/:id" element={<TrackDetail />} />
           {/* No fallback markup: these chunks resolve in a frame or two on a
               warm connection, and a skeleton that flashes is worse than none. */}

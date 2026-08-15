@@ -123,15 +123,28 @@ export default function Sidebar({
           <ModeToggle expanded={expanded} />
         </div>
 
-        {/* Settings — subtle, sits just above the profile */}
+        {/* Settings — subtle, sits just above the profile. Not in NAV: the
+            placement is deliberate, only the dead state is gone. */}
         <button
           type="button"
-          disabled
-          title="Settings — coming soon"
-          aria-label="Settings — coming soon"
-          className="r-inner flex h-10 w-full cursor-not-allowed items-center gap-3.5 border border-transparent px-2 text-ink-faint opacity-40"
+          title="Settings"
+          aria-label="Settings"
+          aria-current={pathname === "/settings" ? "page" : undefined}
+          onClick={() => nav("/settings")}
+          className={cn(
+            "r-inner flex h-10 w-full items-center gap-3.5 border px-2 transition-colors",
+            pathname === "/settings"
+              ? "border-signal/25 bg-signal/15 text-ink"
+              : "border-transparent text-ink-muted hover:bg-white/[0.06] hover:text-ink",
+          )}
         >
-          <Settings className="h-[18px] w-[18px] flex-shrink-0" strokeWidth={1.75} />
+          <Settings
+            className={cn(
+              "h-[18px] w-[18px] flex-shrink-0",
+              pathname === "/settings" && "text-signal-bright",
+            )}
+            strokeWidth={1.75}
+          />
           <span
             className={cn(
               "whitespace-nowrap text-sm font-medium transition-opacity duration-200",

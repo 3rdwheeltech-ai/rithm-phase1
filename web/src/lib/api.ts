@@ -1,5 +1,6 @@
 import { decodeJwt } from "./jwt";
 import { useAuth, type AuthUser } from "../store/auth";
+import type { MeResponse, Profile, ProfilePatch } from "../types/profile";
 
 /**
  * The API base is a RELATIVE path and nothing else.
@@ -231,6 +232,26 @@ export async function signup(payload: {
   consent_version: string;
 }): Promise<void> {
   await request("/auth/signup", { method: "POST", body: JSON.stringify(payload) });
+}
+
+// ── Profile ────────────────────────────────────────────────────────────────
+
+/** Identity plus the profile document, in one round trip. */
+export function getMe(): Promise<MeResponse> {
+  return request<MeResponse>("/me");
+}
+
+/**
+ * Partial update. Send only the keys that changed — the server merges per key.
+ *
+ * Answers with the full updated profile rather than 204, so the caller can
+ * write it straight into the query cache instead of refetching.
+ */
+export function patchProfile(patch: ProfilePatch): Promise<Profile> {
+  return request<Profile>("/me/profile", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 // ── Requests ───────────────────────────────────────────────────────────────

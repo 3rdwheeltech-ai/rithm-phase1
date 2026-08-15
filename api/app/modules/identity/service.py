@@ -11,6 +11,10 @@ without completing an email verification step.
 import base64
 import hashlib
 import hmac
+import json
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
 
 import boto3
 from fastapi.concurrency import run_in_threadpool
@@ -19,6 +23,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_utils import uuid7
 
 from app.config import get_settings
+from app.modules.identity.models import (
+    ME_COLUMNS,
+    USERS_TABLE,
+    MeRow,
+    decode_profile,
+    initial_profile,
+    normalize_profile,
+)
+from app.modules.identity.schemas import MeResponse, Profile, ProfilePatchRequest
 
 _settings = get_settings()
 
@@ -45,6 +58,62 @@ def _secret_hash(username: str) -> str:
     return base64.b64encode(digest).decode()
 
 
+# ── Profile SQL ───────────────────────────────────────────────────────────
+# Built once at import. The table name is a module constant, never a caller's
+# string, so the f-string is not an injection surface — every value is bound.
+_SELECT_ME = text(f"SELECT {ME_COLUMNS} FROM {USERS_TABLE} WHERE id = :id")  # noqa: S608
+_SELECT_PROFILE_FOR_UPDATE = text(
+    f"SELECT profile FROM {USERS_TABLE} WHERE id = :id FOR UPDATE"  # noqa: S608
+)
+_UPDATE_PROFILE = text(
+    f"UPDATE {USERS_TABLE} SET profile = CAST(:profile AS JSONB) WHERE id = :id"  # noqa: S608
+)
+
+
+def merge_profile(
+    current: dict[str, Any],
+    patch: ProfilePatchRequest,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """
+    Apply only the keys the request actually set. Pure — no DB, no clock.
+
+    `model_dump(exclude_unset=True)` is what makes the three cases distinct:
+    an absent key leaves the stored value alone, an explicit null clears it, and
+    a value replaces it. It recurses into `preferences`, so a patch touching one
+    preference produces a one-key dict and the siblings survive untouched.
+
+    That per-key granularity is also why the SQL side is a read-modify-write
+    rather than `profile || :patch`: the `||` operator merges only at the top
+    level, so patching one preference would drop every other one.
+    """
+    merged = normalize_profile(current)
+    body = patch.model_dump(exclude_unset=True)
+
+    if "display_name" in body:
+        merged["display_name"] = body["display_name"] or ""
+
+    if isinstance(body.get("preferences"), dict):
+        # Key-by-key, not a wholesale replace — see the docstring.
+        merged["preferences"] = {**merged["preferences"], **body["preferences"]}
+
+    action = body.get("onboarding_action")
+    if action is not None:
+        merged["onboarding"] = {
+            **merged["onboarding"],
+            # Only stamp the first time. Re-running onboarding (or a retried
+            # request) must not move the original completion date.
+            "completed_at": merged["onboarding"]["completed_at"]
+            or now.isoformat().replace("+00:00", "Z"),
+            "skipped": action == "skip",
+        }
+
+    # Re-normalize: the patch is already validated, but this re-applies the caps
+    # and fills any key a future version added.
+    return normalize_profile(merged)
+
+
 class IdentityService:
     async def signup(
         self,
@@ -59,8 +128,10 @@ class IdentityService:
         Returns the new local user_id as a string.
 
         name/given_name/phone_number are required attributes on the dev user
-        pool; given_name mirrors name. They live in Cognito only — the local
-        identity.users table is unchanged.
+        pool; given_name mirrors name. Cognito remains their system of record;
+        the local row additionally seeds `profile.display_name` from name,
+        because this is the one moment the API knows it — the lazy insert in
+        shared/auth.py only ever sees the token claims.
         """
         resp = await run_in_threadpool(
             _cognito.sign_up,
@@ -94,8 +165,9 @@ class IdentityService:
         await db.execute(
             text("""
                 INSERT INTO identity.users
-                    (id, cognito_sub, email, consent_accepted_at, consent_version)
-                VALUES (:id, :sub, :email, now(), :cv)
+                    (id, cognito_sub, email, consent_accepted_at, consent_version,
+                     profile)
+                VALUES (:id, :sub, :email, now(), :cv, CAST(:profile AS JSONB))
                 ON CONFLICT (cognito_sub) DO NOTHING
             """),
             {
@@ -103,9 +175,56 @@ class IdentityService:
                 "sub": sub,
                 "email": email,
                 "cv": _settings.current_consent_version,
+                # json.dumps + CAST, never a bare dict: with text() SQLAlchemy
+                # has no column type to attach its JSONB codec to, so a dict
+                # reaches asyncpg as an unencodable object. Same pattern as
+                # catalog/service.py.
+                "profile": json.dumps(initial_profile(name)),
             },
         )
         return user_id
+
+    async def get_me(self, db: AsyncSession, user_id: UUID) -> MeResponse | None:
+        """The /me projection, with the profile normalized. None if no such row."""
+        row = (await db.execute(_SELECT_ME, {"id": str(user_id)})).mappings().first()
+        if row is None:
+            return None
+        me = MeRow.from_row(row)
+        return MeResponse(
+            user_id=str(user_id),
+            email=me.email,
+            is_admin=me.is_admin,
+            profile=Profile.model_validate(normalize_profile(me.profile)),
+        )
+
+    async def patch_profile(
+        self, db: AsyncSession, user_id: UUID, patch: ProfilePatchRequest
+    ) -> Profile | None:
+        """
+        Read-modify-write the profile document. None if no such row.
+
+        `FOR UPDATE` serializes two concurrent PATCHes (two tabs, or Settings
+        racing the onboarding submit) for the microseconds until
+        get_identity_db commits. Because the merge is per-key, the loser only
+        loses the keys it actually set.
+        """
+        row = (
+            await db.execute(_SELECT_PROFILE_FOR_UPDATE, {"id": str(user_id)})
+        ).first()
+        if row is None:
+            return None
+
+        current = decode_profile(row[0])
+        merged = merge_profile(current, patch, now=datetime.now(tz=UTC))
+
+        # Skip the write when nothing moved: the users_touch trigger fires on
+        # any UPDATE, and a no-op Save should not bump updated_at.
+        if merged != current:
+            await db.execute(
+                _UPDATE_PROFILE,
+                {"id": str(user_id), "profile": json.dumps(merged)},
+            )
+        return Profile.model_validate(merged)
 
     async def login(self, email: str, password: str) -> dict:
         """Authenticate via USER_PASSWORD_AUTH.

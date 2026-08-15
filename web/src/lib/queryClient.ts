@@ -34,6 +34,8 @@ export function createQueryClient(): QueryClient {
  * `invalidateQueries({ queryKey: qk.tracks })` on job completion correct.
  */
 export const qk = {
+  /** The signed-in user + their profile document. One entry, no variants. */
+  me: ["me"] as const,
   tracks: ["tracks"] as const,
   tracksList: () => ["tracks", "list"] as const,
   track: (id: string) => ["tracks", "detail", id] as const,

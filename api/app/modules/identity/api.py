@@ -9,6 +9,8 @@ from app.config import get_settings
 from app.modules.identity.schemas import (
     LoginRequest,
     MeResponse,
+    Profile,
+    ProfilePatchRequest,
     RefreshRequest,
     SignupRequest,
     SignupResponse,
@@ -105,12 +107,34 @@ async def me(
     user_id: UUID = Depends(require_user),
     db: AsyncSession = Depends(get_identity_db),
 ) -> MeResponse:
-    row = (
-        await db.execute(
-            text("SELECT email, is_admin FROM identity.users WHERE id = :id"),
-            {"id": str(user_id)},
-        )
-    ).first()
-    if not row:
+    """
+    Identity plus the profile document, in one round trip.
+
+    The SPA blocks its authed shell on this call (the onboarding gate reads
+    `profile.onboarding`), so it deliberately carries everything the chrome and
+    the Settings page need rather than making them ask twice.
+    """
+    response = await identity_service.get_me(db, user_id)
+    if response is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-    return MeResponse(user_id=str(user_id), email=row[0], is_admin=row[1])
+    return response
+
+
+@router.patch("/me/profile", response_model=Profile)
+async def patch_me_profile(
+    body: ProfilePatchRequest,
+    user_id: UUID = Depends(require_user),
+    db: AsyncSession = Depends(get_identity_db),
+) -> Profile:
+    """
+    Partial update of the profile document.
+
+    Returns the full updated profile rather than 204 so the client can write it
+    straight into its cache. That matters: the onboarding gate reads the cached
+    document, and a refetch round trip would re-evaluate it against stale data
+    and bounce the user back to /onboarding the frame after they finished it.
+    """
+    profile = await identity_service.patch_profile(db, user_id, body)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return profile

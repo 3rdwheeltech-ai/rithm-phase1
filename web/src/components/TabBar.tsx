@@ -110,12 +110,10 @@ export default function TabBar({
             AI Tools
           </button>
 
-          {/* Shown disabled rather than hidden — the same decision the sidebar made. */}
           <button
             type="button"
-            disabled
-            title="Settings — coming soon"
-            className="r-inner flex h-11 w-full cursor-not-allowed items-center gap-3 px-2 text-sm font-medium text-ink-faint opacity-40"
+            onClick={() => nav("/settings")}
+            className="r-inner flex h-11 w-full items-center gap-3 px-2 text-sm font-medium text-ink-muted transition-colors hover:bg-white/[0.06] hover:text-ink"
           >
             <Settings className="h-[18px] w-[18px]" strokeWidth={1.75} />
             Settings

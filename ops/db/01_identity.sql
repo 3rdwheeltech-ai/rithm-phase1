@@ -11,6 +11,7 @@ CREATE TABLE identity.users (
     is_admin             BOOLEAN      NOT NULL DEFAULT FALSE,
     consent_accepted_at  TIMESTAMPTZ,
     consent_version      VARCHAR(16),                        -- e.g. 'tos-2026-05'
+    profile              JSONB        NOT NULL DEFAULT '{}'::jsonb, -- shape owned by identity/models.py
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
