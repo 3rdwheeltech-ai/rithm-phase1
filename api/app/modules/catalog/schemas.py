@@ -55,5 +55,11 @@ class TrackDetail(TrackSummary):
     """
 
     wav_url: str
+    # The words the track was generated FROM, not a transcript of what was sung.
+    # NULL twice over: for an instrumental, and for a vocal track whose lyrics
+    # the model wrote itself (the user left the box empty). Detail-only on
+    # purpose — at 3000 chars a piece, twenty of these would triple the list
+    # response for something no list row renders.
+    lyrics: str | None
     waveform_hash: str
     prompt_history: list[PromptHistoryEntry]

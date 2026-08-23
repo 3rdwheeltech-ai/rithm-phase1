@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   Play,
   Pause,
@@ -20,14 +19,12 @@ import { cn } from "../lib/cn";
 import { useHoverIntent } from "../lib/useHoverIntent";
 import { useLens } from "../lib/useLens";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
-import { request } from "../lib/api";
-import { qk } from "../lib/queryClient";
 import { formatDuration, trackTags, trackTitle } from "../lib/track";
 import { useCreateUI } from "../store/createUI";
 import { hasNext, hasPrevious, usePlayer } from "../store/player";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
+import { useTrack } from "../hooks/useTrack";
 import CoverArt from "./CoverArt";
-import type { TrackDetail } from "../types/api";
 
 const SPEEDS = [1, 1.25, 1.5, 2] as const;
 const SCRUB_STEP_SECONDS = 5;
@@ -270,7 +267,6 @@ export default function Player({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [speedIdx, setSpeedIdx] = useState(0);
   const { hovered, onMouseEnter, onMouseLeave } = useHoverIntent();
-  const queryClient = useQueryClient();
   const deleteTrack = useDeleteTrack();
 
   // home   → docked above the avatar, always expanded, parent-sized
@@ -309,6 +305,11 @@ export default function Player({
   const retriedRef = useRef(false);
   const audioUrl = track?.mp3_url ?? null;
   const trackId = track?.id ?? null;
+  // The store holds a TrackSummary, which carries no lyrics. This reads the
+  // detail off the SAME query key the expiry-recovery path and useJobStream
+  // already populate, so on the common paths it is a cache hit, not a request.
+  const { data: detail, refetch: refetchDetail } = useTrack(trackId ?? undefined);
+  const lyrics = detail?.id === trackId ? detail.lyrics : null;
 
   function flashHint(message: string) {
     setHint(message);
@@ -331,17 +332,16 @@ export default function Player({
       return;
     }
     retriedRef.current = true;
-    try {
-      await queryClient.invalidateQueries({ queryKey: qk.track(trackId) });
-      const fresh = await queryClient.fetchQuery({
-        queryKey: qk.track(trackId),
-        queryFn: () => request<TrackDetail>(`/tracks/${trackId}`),
-      });
+    // refetch() on the panel's own query, NOT a second fetchQuery on the same
+    // key. Two owners of one key means invalidate wakes both and the retry
+    // budget this function exists to enforce is quietly spent twice.
+    const { data: fresh } = await refetchDetail();
+    if (fresh) {
       setTrack(fresh);
-    } catch {
+    } else {
       setLinkDead(true);
     }
-  }, [queryClient, setTrack, trackId]);
+  }, [refetchDetail, setTrack, trackId]);
 
   // Sync playback time/progress off the element.
   useEffect(() => {
@@ -749,10 +749,18 @@ export default function Player({
 
           {track ? (
             <>
-              {/* The API stores the prompt, not lyrics — show what produced the
-                  track rather than inventing words it does not have. */}
+              {/* Lyrics when the user supplied them, the prompt otherwise. A
+                  track whose words the model wrote has no lyrics stored, and
+                  inventing words it does not have is worse than showing what
+                  produced it. */}
               <div className="-mr-1 flex-1 overflow-y-auto pr-1">
-                <p className="text-xs leading-relaxed text-ink-muted">{track.prompt}</p>
+                {lyrics ? (
+                  <p className="whitespace-pre-wrap font-mono text-2xs leading-relaxed text-ink-muted">
+                    {lyrics}
+                  </p>
+                ) : (
+                  <p className="text-xs leading-relaxed text-ink-muted">{track.prompt}</p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-2xs text-ink-faint">
                   {track.genre && <span>{track.genre}</span>}
                   {track.mood && <span>{track.mood}</span>}

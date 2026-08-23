@@ -119,6 +119,12 @@ export interface PromptHistoryEntry {
 export interface TrackDetail extends TrackSummary {
   /** Presigned, 15-MINUTE TTL. */
   wav_url: string;
+  /**
+   * The words the track was generated FROM, not a transcript. Null for an
+   * instrumental, and null for a vocal track whose lyrics the model wrote
+   * itself. Detail-only — TrackSummary does not carry it.
+   */
+  lyrics: string | null;
   waveform_hash: string;
   prompt_history: PromptHistoryEntry[];
 }

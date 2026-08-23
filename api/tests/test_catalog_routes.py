@@ -251,6 +251,59 @@ async def test_detail_includes_ascending_prompt_history(
 
 
 @pytest.mark.asyncio
+async def test_detail_carries_lyrics_but_the_list_does_not(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The words a track was made from are readable, and only from the detail.
+
+    The column was written from Day 3 and serialized by nothing, so there was no
+    way to confirm what a track had actually been generated with — which is
+    exactly what made a worker silently dropping lyrics invisible from outside.
+    Detail-only because lyrics run to 3000 characters and no list row shows them.
+    """
+    words = "[verse]\nCity lights are fading slow\n[chorus]\nChasing echoes"
+
+    async def _get(**_kwargs: Any) -> TrackRow:
+        return _track(0, vocal=True, lyrics=words)
+
+    async def _history(**_kwargs: Any) -> list[PromptRow]:
+        return [_prompt()]
+
+    async def _list(**_kwargs: Any) -> tuple[list[TrackRow], bool, int]:
+        return [_track(0, vocal=True, lyrics=words)], False, 1
+
+    monkeypatch.setattr(catalog_service, "get_track", _get)
+    monkeypatch.setattr(catalog_service, "get_prompt_history", _history)
+    monkeypatch.setattr(catalog_service, "list_tracks", _list)
+
+    detail = (await client.get(f"/api/v1/tracks/{uuid4()}")).json()
+    assert detail["lyrics"] == words
+
+    summary = (await client.get("/api/v1/tracks")).json()[0]
+    assert "lyrics" not in summary
+
+
+@pytest.mark.asyncio
+async def test_detail_lyrics_are_null_when_the_model_wrote_them(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Null is a real state, not a missing field — the client has to model it."""
+
+    async def _get(**_kwargs: Any) -> TrackRow:
+        return _track(0)
+
+    async def _history(**_kwargs: Any) -> list[PromptRow]:
+        return [_prompt()]
+
+    monkeypatch.setattr(catalog_service, "get_track", _get)
+    monkeypatch.setattr(catalog_service, "get_prompt_history", _history)
+
+    body = (await client.get(f"/api/v1/tracks/{uuid4()}")).json()
+    assert body["lyrics"] is None
+
+
+@pytest.mark.asyncio
 async def test_detail_of_a_foreign_or_missing_track_is_404(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

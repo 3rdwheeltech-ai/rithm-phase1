@@ -207,6 +207,23 @@ describe("CreateForm", () => {
     expect(body.lyrics).toBeNull();
   });
 
+  it("says so when a mode switch leaves written lyrics unused", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    await user.type(screen.getByLabelText("Your lyrics"), "some words");
+
+    // The textarea unmounts on the switch, so without a note the text is gone
+    // from the screen AND from the request with nothing said about either.
+    await user.click(screen.getByRole("tab", { name: "Generate" }));
+    expect(screen.getByText(/lyrics are saved but will not be used/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    expect(screen.queryByText(/will not be used/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Your lyrics")).toHaveValue("some words");
+  });
+
   it("refills the instrument suggestions as they are used", async () => {
     const user = userEvent.setup();
     renderWithProviders(<CreateForm />);

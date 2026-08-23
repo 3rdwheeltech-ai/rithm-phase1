@@ -18,6 +18,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: rithm/worker
+  ECS_CLUSTER: rithm-prod
 
 jobs:
   deploy:
@@ -52,15 +53,15 @@ jobs:
             -t "$REGISTRY/$ECR_REPOSITORY:latest" \
             --push worker/
 
-      # Register a revision and STOP. No update-service: the worker service
-      # sits at desiredCount=0 between jobs and picks the new revision up on the
-      # next scale-up. Calling update-service would start a GPU task purely to
-      # prove a deploy worked, which is an expensive way to feel confident.
+      # Describe-and-patch, not render-from-template: the task definition holds
+      # ACESTEP_API_BASE and other values set by hand, and re-rendering would
+      # silently overwrite them on the next unrelated push.
       #
       # The family is a repo variable rather than a hardcode because the
       # sidecar-vs-standalone decision for the ACE-Step server may change which
       # family is the real one.
       - name: Register a new task definition
+        id: register
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           TASK_FAMILY: ${{ vars.WORKER_TASK_FAMILY || 'rithm-worker' }}
@@ -76,4 +77,28 @@ jobs:
 
           REV=$(aws ecs register-task-definition --cli-input-json file://new-td.json \
                 --query 'taskDefinition.revision' --output text)
-          echo "registered $TASK_FAMILY:$REV — it goes live on the next scale-up"
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "registered $TASK_FAMILY:$REV"
+
+      # Registering is NOT deploying. This step used to be absent, on the theory
+      # that the worker idles at desiredCount=0 and would pick the new revision
+      # up on its next scale-up. That is true of rithm-worker-service (the GPU
+      # service, still at 0) and false of rithm-worker-fg, which runs always-on
+      # at 1 and therefore never scales up. The result was two weeks of silent
+      # drift: user-supplied lyrics shipped, CI registered the image, and the
+      # running task stayed on a revision that predated the feature and sent an
+      # empty lyrics field to ACE-Step. Roll the service explicitly.
+      - name: Roll the always-on worker
+        env:
+          TASK_FAMILY: ${{ vars.WORKER_TASK_FAMILY || 'rithm-worker' }}
+          ECS_SERVICE: ${{ vars.WORKER_SERVICE || 'rithm-worker-fg' }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_FAMILY:${{ steps.register.outputs.revision }}" \
+            --query 'service.deployments[0].{status:status,desired:desiredCount}' \
+            --output table
+
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "service stable on $TASK_FAMILY:${{ steps.register.outputs.revision }}"

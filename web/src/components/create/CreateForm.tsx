@@ -168,7 +168,7 @@ export default function CreateForm() {
           onChange={setLyricMode}
           options={[
             { value: "write", label: "Write" },
-            { value: "vocal", label: "Sung" },
+            { value: "vocal", label: "Generate" },
             { value: "instrumental", label: "Instrumental" },
             { value: "describe", label: "Describe", disabled: true, title: COMING_SOON_DETAIL },
           ]}
@@ -209,11 +209,23 @@ export default function CreateForm() {
           </div>
         </>
       ) : (
-        <p className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-3 text-xs leading-relaxed text-ink-faint">
-          {lyricMode === "instrumental"
-            ? "Instrumental — no vocals. RITHM will compose music only."
-            : "RITHM writes the words to match your description. Switch to Write to supply your own."}
-        </p>
+        <div className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-3">
+          <p className="text-xs leading-relaxed text-ink-faint">
+            {lyricMode === "instrumental"
+              ? "Instrumental — no vocals. RITHM will compose music only."
+              : "RITHM writes the words to match your description. Switch to Write to supply your own."}
+          </p>
+          {/* The textarea unmounts on a mode switch but the state survives, so
+              without this the words the user typed vanish with no trace and are
+              silently left out of the request. Say so instead. The payload rule
+              at onCreate does not change: these modes mean "not my words". */}
+          {lyrics.trim() && (
+            <p className="mt-2 text-2xs leading-snug text-ink-faint">
+              Your {lyrics.trim().length} characters of lyrics are saved but will not be
+              used — switch back to Write to sing them.
+            </p>
+          )}
+        </div>
       )}
     </section>
   );

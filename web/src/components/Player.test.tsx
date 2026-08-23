@@ -59,6 +59,12 @@ describe("Player", () => {
 
     renderWithProviders(<Player variant="home" />);
 
+    // The panel reads the track detail for its lyrics, so the raw call count is
+    // no longer the recovery's own. Measure the DELTA across the error instead
+    // — that is what "exactly once" was ever about.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const before = fetchMock.mock.calls.length;
+
     await act(async () => {
       fireEvent.error(audio());
     });
@@ -68,8 +74,9 @@ describe("Player", () => {
         "https://s3.example/fresh.mp3?X-Amz-Expires=900",
       ),
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(`/api/v1/tracks/${TRACK.id}`);
+    expect(fetchMock.mock.calls.length - before).toBe(1);
+    const last = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as [string];
+    expect(last[0]).toBe(`/api/v1/tracks/${TRACK.id}`);
   });
 
   it("gives up after the retry rather than looping against a dead link", async () => {
@@ -83,12 +90,15 @@ describe("Player", () => {
     );
 
     renderWithProviders(<Player variant="home" />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const before = fetchMock.mock.calls.length;
 
     // First failure: one refetch.
     await act(async () => {
       fireEvent.error(audio());
     });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchMock.mock.calls.length - before).toBe(1));
+    const afterFirst = fetchMock.mock.calls.length;
 
     // Second failure on the same track: no further requests, and say so.
     await act(async () => {
@@ -96,7 +106,7 @@ describe("Player", () => {
     });
 
     expect(await screen.findByText("This link expired — refresh the page.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.length).toBe(afterFirst);
   });
 
   it("shows an empty state and disables play with no track loaded", () => {

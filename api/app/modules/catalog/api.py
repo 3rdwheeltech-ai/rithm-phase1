@@ -147,6 +147,7 @@ async def get_track(
     return TrackDetail(
         **_summary(track).model_dump(),
         wav_url=presign_get(track.s3_wav_key, expires=_URL_TTL_SECONDS),
+        lyrics=track.lyrics,
         waveform_hash=track.waveform_hash,
         prompt_history=[_prompt_entry(row) for row in history],
     )
