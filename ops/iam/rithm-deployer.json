@@ -57,7 +57,11 @@
         "ecs:UpdateService",
         "ecs:DescribeServices"
       ],
-      "Resource": "arn:aws:ecs:us-east-1:685448855132:service/rithm-prod/rithm-api-service-pqqbkv2h"
+      "Resource": [
+        "arn:aws:ecs:us-east-1:685448855132:service/rithm-prod/rithm-api-service-pqqbkv2h",
+        "arn:aws:ecs:us-east-1:685448855132:service/rithm-prod/rithm-worker-fg",
+        "arn:aws:ecs:us-east-1:685448855132:service/rithm-prod/rithm-worker-service"
+      ]
     },
     {
       "Sid": "PassTaskRoles",
