@@ -605,6 +605,63 @@ async def test_disagreeing_lyric_fields_are_rejected(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("sessions", "bedrock")
+async def test_an_spa_from_before_lyrics_mode_still_gets_an_instrumental(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    The deploy window, pinned.
+
+    An SPA cached before lyrics_mode existed sends `vocal: false` and no mode.
+    Defaulting that to WRITE and then enforcing the biconditional would 422
+    every instrumental request from a stale tab — and CloudFront serves that JS
+    for a while after the API rolls, so "deploy the web first" does not fix it.
+    """
+    body = {k: v for k, v in GENERATE_BODY.items() if k != "lyrics_mode"}
+    assert body["vocal"] is False
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    params = _envelope(sqs)["params"]
+    assert params["vocal"] is False
+    assert params["lyrics"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_an_omitted_mode_on_a_sung_track_still_means_write(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """The shim is scoped to vocal=false; it must not disturb the WRITE default."""
+    body = {k: v for k, v in SUNG_BODY.items() if k != "lyrics_mode"}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    # WRITE with an empty box, so the lyricist was asked — the §0.3 rule.
+    assert _envelope(sqs)["params"]["lyrics_source"] == "model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_an_explicit_write_with_vocal_false_is_still_rejected(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    The shim reads `model_fields_set`, so it fires only on an OMITTED field.
+    A client that states the contradiction outright still gets a 422 — losing
+    that would make the biconditional unenforceable for every current client.
+    """
+    body = {**GENERATE_BODY, "lyrics_mode": "write"}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
 async def test_a_voice_on_an_instrumental_normalises_instead_of_422ing(
     client: AsyncClient, sqs: list[dict[str, Any]]
 ) -> None:

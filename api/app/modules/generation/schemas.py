@@ -226,6 +226,17 @@ class GenerateRequest(BaseModel):
                 continue
             setattr(self, field, value.strip() or None)
 
+        # Deploy-window compatibility, and ONLY that. An SPA cached before
+        # lyrics_mode existed sends `vocal: false` and no mode at all, which
+        # would otherwise fail the biconditional below and 422 every
+        # instrumental request from a stale tab — and CloudFront keeps serving
+        # that JS for a while after the API rolls. `model_fields_set` is what
+        # makes this safe: it fires only when the field was OMITTED, so a
+        # current client, which always sends one, can never reach it. An
+        # EXPLICIT lyrics_mode='write' with vocal=false is still a 422.
+        if "lyrics_mode" not in self.model_fields_set and not self.vocal:
+            self.lyrics_mode = LyricsMode.INSTRUMENTAL
+
         instrumental = self.lyrics_mode is LyricsMode.INSTRUMENTAL
         if instrumental != (not self.vocal):
             raise ValueError(
