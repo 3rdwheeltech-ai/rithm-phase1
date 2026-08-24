@@ -67,17 +67,34 @@ def _s3() -> Any:
 
 def _bedrock_client() -> Any:
     """
-    Lazily build the bedrock-runtime client. Deliberately does NOT honour
-    `aws_endpoint_url`.
+    Lazily build the bedrock-runtime client. Deliberately does NOT honour any
+    configured endpoint override.
 
     LocalStack has no Bedrock. Sending this at :4566 turns a call that is
-    supposed to degrade quietly into a connection error on every single
-    submit — a failure mode that appears only locally, which is the worst
-    kind. That is why this does not reuse `_client()`.
+    supposed to degrade quietly into an error on every single submit — a
+    failure mode that appears only locally, which is the worst kind. That is
+    why this does not reuse `_client()`.
+
+    `ignore_configured_endpoint_urls` is the load-bearing line, and merely
+    omitting `endpoint_url=` is NOT enough: AWS_ENDPOINT_URL is a
+    botocore-NATIVE environment variable, applied to every service
+    automatically, so docker-compose's `AWS_ENDPOINT_URL: http://localstack:4566`
+    reaches this client whether we pass one or not. Verified against
+    botocore 1.40: without this flag the resolved endpoint is localstack:4566
+    and every Converse returns LocalStack's "unknown operation for service
+    bedrock" InternalError. It also covers the same override set in a profile
+    or in AWS_ENDPOINT_URL_BEDROCK_RUNTIME.
 
     One attempt, short timeouts: the caller already has an asyncio timeout and
     a fallback, and botocore's default three retries would blow through both.
     A retry storm, not the price per call, is the thing to watch here.
+
+    `total_max_attempts`, NOT `max_attempts`: botocore reads the latter as a
+    retry count and normalises `max_attempts=1` to two total attempts. Two
+    attempts at a 10s read timeout is up to 20s of wall clock in front of a
+    202 the user is watching a spinner for — and the title call's whole budget
+    is 4s, so its retry could never land inside the window anyway. One attempt
+    is what the latency budget can afford, so it is what is asked for.
     """
     global _bedrock_runtime_client
     if _bedrock_runtime_client is None:
@@ -88,7 +105,8 @@ def _bedrock_client() -> Any:
             config=Config(
                 connect_timeout=2,
                 read_timeout=10,
-                retries={"max_attempts": 1, "mode": "standard"},
+                retries={"total_max_attempts": 1, "mode": "standard"},
+                ignore_configured_endpoint_urls=True,
             ),
         )
     return _bedrock_runtime_client
