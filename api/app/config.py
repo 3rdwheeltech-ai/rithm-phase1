@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # `anthropic.claude-haiku-4-5-...` returns a ValidationException that reads
     # like a typo. The prefix is load-bearing, and the task role's policy must
     # grant BOTH the profile ARN and the underlying regional model ARNs.
+    #
+    # This DEFAULT is the destination, not what production runs today: every
+    # Anthropic model on Bedrock is gated behind a one-time per-account "use
+    # case details" form, and until it is submitted this id returns
+    # ResourceNotFoundException and lyrics degrade to ACE-Step. The live
+    # taskdef overrides it with us.amazon.nova-2-lite-v1:0 in the meantime.
+    # Remove that override once the form clears.
     bedrock_lyrics_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     # The cheapest text model on Bedrock. A title is ~300 tokens in and ~10 out,
     # so this line item is rounding error.

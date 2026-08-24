@@ -19,6 +19,44 @@ whichever region it routes the call to. Grant only the profile and it works —
 until the day traffic routes to `us-west-2`, and then it is an intermittent
 `AccessDeniedException` that nothing in the logs explains.
 
+## Two gates, not one
+
+IAM is only half of it. Anthropic models on Bedrock are ALSO gated behind a
+one-time, per-ACCOUNT **"use case details" form** (Bedrock → Model access →
+Anthropic → Submit use case details). Until it is submitted, every Anthropic id
+returns:
+
+```
+ResourceNotFoundException: Model use case details have not been submitted for
+this account. Fill out the Anthropic use case details form before using the
+model.
+```
+
+Verified 2026-08-24: this is account-wide, not per-model — Haiku 4.5,
+Claude 3.5 Haiku and Claude 3 Haiku all fail identically, so **no model-id
+substitution routes around it**. Amazon and Google models are unaffected.
+
+Because that error is a `ClientError`, `converse` swallows it and the request
+degrades to a prompt-derived title and ACE-Step's own lyrics — a 202 either
+way. The feature simply never works, and nothing in the logs says why beyond
+one `bedrock_converse_failed` line. That is the first thing to check.
+
+**Until the form clears** the live taskdef sets
+`BEDROCK_LYRICS_MODEL_ID=us.amazon.nova-2-lite-v1:0`. Measured over 5 calls
+against the real lyricist prompt:
+
+| Model | median | max | verdict |
+|---|---|---|---|
+| `us.amazon.nova-2-lite-v1:0` | 2.3s | 2.7s | in use |
+| `amazon.nova-pro-v1:0` | 2.2s | 3.5s | viable alternative |
+| `google.gemma-3-27b-it` | — | >10s | **rejected** — exceeds the client read timeout |
+| `google.gemma-3-12b-it` | — | >10s | **rejected** — same |
+
+Gemma is worth a note because it looks attractive on a single sample (one 4.5s
+call with the best imagery of the lot) and is not viable on five: it sits in
+front of a 202 the user is watching a spinner for, and the 8s lyrics budget is
+a latency ceiling, not a suggestion.
+
 Model access must also be enabled in the console (Bedrock → Model access,
 `us-east-1`) for **Anthropic · Claude Haiku 4.5** and **Amazon · Nova Micro**.
 Verify both ids before they go near a task definition — a wrong id fails
