@@ -5,12 +5,27 @@ the precedent set by commit `cd31991`: apply it as an **inline policy** and
 check the JSON in here for the audit trail. Task-role permissions are evaluated
 per call, so **no redeploy is needed**.
 
+**Applied 2026-08-24 as `rithm-api-task-bedrock`** — that name, not the
+`rithm-api-bedrock-authoring` this file originally specified. Nothing depends
+on the name; it is recorded here so a later diff of live-vs-repo looks for the
+right one.
+
 ```bash
 aws iam put-role-policy --role-name rithm-api-task-role \
-  --policy-name rithm-api-bedrock-authoring \
+  --policy-name rithm-api-task-bedrock \
   --policy-document file://ops/iam/rithm-api-task-role-bedrock.json
 aws iam list-role-policies --role-name rithm-api-task-role
-# expect: rithm-api-bedrock-authoring in the list
+# expect: rithm-api-task-bedrock in the list
+```
+
+Verified against the live profiles rather than assumed — both cross-region
+profiles route to exactly the three regions the policy grants:
+
+```bash
+aws bedrock get-inference-profile --region us-east-1 \
+  --inference-profile-identifier us.amazon.nova-2-lite-v1:0 \
+  --query 'models[].modelArn'
+# us-east-1, us-east-2, us-west-2 -- all three are in the policy above
 ```
 
 **The three regional foundation-model ARNs are the trap.** A cross-region
@@ -18,6 +33,19 @@ inference profile authorises against the profile ARN *and* the model ARN in
 whichever region it routes the call to. Grant only the profile and it works —
 until the day traffic routes to `us-west-2`, and then it is an intermittent
 `AccessDeniedException` that nothing in the logs explains.
+
+## A3 — the task definition still needs the env vars
+
+As of 2026-08-24 the live `rithm-api` task definition (rev 13) carries only the
+DEAD `BEDROCK_HAIKU_MODEL_ID` from Day 1 — a setting nothing reads any more,
+safe to drop — and none of `BEDROCK_ENABLED`, `BEDROCK_LYRICS_MODEL_ID` or
+`BEDROCK_TITLE_MODEL_ID`. **`BEDROCK_ENABLED` defaults to False, so until they
+are added the feature is entirely off in production** and every track gets a
+prompt-derived title with `lyrics_source=acestep`.
+
+Do this LAST, after the API image carrying the feature is deployed. Setting it
+on an image without the code does nothing, and doing it first means the switch
+is on before the thing it switches exists.
 
 ## Two gates, not one
 
