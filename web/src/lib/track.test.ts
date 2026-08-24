@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import { trackTitle } from "./track";
 
 /**
- * The derived name IS the product until a real `title` column exists, so the
- * derivation is pinned rather than left to drift.
+ * The derivation is the FLOOR under `catalog.tracks.title`, not a stand-in for
+ * it: every track created before that column existed has `title === null`, and
+ * there are more of those than of the named ones. So it is pinned rather than
+ * left to drift — and `api/app/modules/generation/authoring.py` carries a port
+ * of it that reuses these exact cases, so the two can never disagree about
+ * what a track is called.
  */
-const title = (prompt: string) => trackTitle({ prompt });
+const title = (prompt: string) => trackTitle({ prompt, title: null });
 
 describe("trackTitle", () => {
   it("takes the first clause of a descriptive prompt", () => {
@@ -59,5 +63,36 @@ describe("trackTitle", () => {
     expect(title(",,,")).toBe("Untitled track");
     // Peeling must not consume a prompt that is nothing but filler.
     expect(title("a song about")).toBe("A song about");
+  });
+
+  it("prefers a real title over anything derived from the prompt", () => {
+    expect(trackTitle({ prompt: "warm lo-fi piano, rain", title: "Vinyl Rain" })).toBe(
+      "Vinyl Rain",
+    );
+    // No capitalisation, no clause-splitting, no peeling — a name the user
+    // typed is theirs, and the derivation's rules are not applied to it.
+    expect(trackTitle({ prompt: "anything", title: "a song about, sort of" })).toBe(
+      "a song about, sort of",
+    );
+  });
+
+  it("falls through to the derivation for a blank or missing title", () => {
+    // Null is the state of every track older than the column.
+    expect(trackTitle({ prompt: "warm lo-fi piano, rain", title: null })).toBe(
+      "Warm lo-fi piano",
+    );
+    // A title of pure whitespace is not a name, whatever the server stored.
+    expect(trackTitle({ prompt: "warm lo-fi piano, rain", title: "   " })).toBe(
+      "Warm lo-fi piano",
+    );
+  });
+
+  it("clips an over-long real title at the column bound", () => {
+    const long = `${"Antidisestablishmentarianism ".repeat(4)}End`;
+
+    const result = trackTitle({ prompt: "x", title: long });
+
+    expect(result.length).toBeLessThanOrEqual(81);
+    expect(result.endsWith("…")).toBe(true);
   });
 });

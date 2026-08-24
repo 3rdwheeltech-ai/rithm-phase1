@@ -8,6 +8,9 @@ import type { TrackSummary } from "../types/api";
 const TRACK: TrackSummary = {
   id: "01J000000000000000000000T1",
   prompt: "warm lo-fi piano, soft vinyl crackle",
+  // Null is the state of every track older than the title column, and what
+  // keeps these fixtures exercising trackTitle's prompt derivation.
+  title: null,
   genre: "Lo-Fi",
   mood: "Calm",
   bpm: 85,

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { GENRES, MOODS } from "./api";
+import {
+  GENRES,
+  LYRICS_MAX_LENGTH,
+  LYRICS_PROMPT_MAX_LENGTH,
+  MOODS,
+  PROMPT_MAX_LENGTH,
+  TITLE_MAX_LENGTH,
+} from "./api";
 
 /**
  * These lists are duplicated across the tree boundary — the other copy is the
@@ -32,5 +39,18 @@ describe("generation vocabulary", () => {
       "Inspirational",
       "Dramatic",
     ]);
+  });
+
+  /**
+   * The other copy of each of these is a module constant in
+   * `api/app/modules/generation/schemas.py`. A client bound looser than the
+   * server's is a 422 the user sees; tighter is a control that stops short of
+   * what the API accepts. Both are silent without a pin.
+   */
+  it("length bounds match the server's field constraints", () => {
+    expect(PROMPT_MAX_LENGTH).toBe(2000);
+    expect(LYRICS_MAX_LENGTH).toBe(3000);
+    expect(TITLE_MAX_LENGTH).toBe(80);
+    expect(LYRICS_PROMPT_MAX_LENGTH).toBe(600);
   });
 });

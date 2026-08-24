@@ -6,6 +6,7 @@ CREATE TABLE catalog.tracks (
     id               UUID         PRIMARY KEY,
     user_id          UUID         NOT NULL,                  -- logical FK → identity.users.id
     source_job_id    UUID         NOT NULL,                  -- logical FK → generation.jobs.id
+    title            VARCHAR(120),                           -- the track's name; NULL on rows written before this column existed
 
     -- Generation inputs (denormalized for query convenience)
     genre            VARCHAR(32),

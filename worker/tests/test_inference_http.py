@@ -174,6 +174,21 @@ def test_lyrics_do_not_leak_into_the_caption() -> None:
     assert body["caption"] == "warm lo-fi piano loop, Lo-Fi, Calm, piano"
 
 
+def test_the_requested_voice_reaches_the_caption_and_never_the_lyrics() -> None:
+    """
+    The gender is conditioning, not words. If it ever landed in `lyrics` it
+    would either be sung or displace the vocal switch — both worse than the
+    caption token it is.
+    """
+    seen: list[httpx.Request] = []
+
+    _generate(_model(_succeeding_handler(seen)), vocal=True, voice="female")
+
+    body = json.loads(seen[0].content)
+    assert body["caption"] == "warm lo-fi piano loop, Lo-Fi, Calm, female vocals, piano"
+    assert body["lyrics"] == ""
+
+
 def test_instrumental_beats_supplied_lyrics() -> None:
     """
     The API rejects this pair with a 422, so it should never arrive — but the

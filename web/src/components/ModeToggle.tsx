@@ -1,64 +1,74 @@
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
+import GradientText from "./GradientText/GradientText";
+import ComingSoonDialog from "./ComingSoonDialog";
 
-type Mode = "basic" | "pro";
+// Same sweep on both control states — teal into the amber "upgrade" accent
+// and back, so the loop has no seam.
+const UPGRADE_GRADIENT = ["#34E3C8", "#7DF3E2", "#FFB454", "#7DF3E2", "#34E3C8"];
 
 /**
- * Basic / Pro segmented toggle. Purely visual this phase — switching to Pro only
- * lights the control with a subtler version of the quick-gen glow (.ai-frame-soft).
+ * Basic / Pro control. Basic is the only mode that exists, permanently
+ * selected — the Pro slot is a call to action, not a toggle, so it's pure
+ * type (a small "Upgrade to" label giving way to a big bold "Pro" wordmark,
+ * no icon standing in for a brand that doesn't have one yet) and opens the
+ * same coming-soon card the rest of the app uses instead of pretending to
+ * switch modes.
  *
  * Lives in the sidebar footer, so it adapts to the rail's two states: the full
- * Basic/Pro pill when expanded, and a single compact mode button when collapsed.
+ * Basic/Upgrade pill when expanded, and a single compact button when collapsed.
  */
 export default function ModeToggle({ expanded = true }: { expanded?: boolean }) {
-  const [mode, setMode] = useState<Mode>("basic");
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
-  // Collapsed rail — a single square button that flips the mode on click.
+  // Collapsed rail — a single square button that opens the upgrade card.
   if (!expanded) {
     return (
-      <div className={mode === "pro" ? "ai-frame-soft !rounded-el" : undefined}>
+      <>
         <button
           type="button"
-          onClick={() => setMode((m) => (m === "basic" ? "pro" : "basic"))}
-          title={mode === "pro" ? "Pro mode" : "Basic mode"}
-          aria-label={`Mode: ${mode}. Toggle.`}
-          className={`flex h-9 w-full items-center justify-center rounded-el border transition-colors ${
-            mode === "pro"
-              ? "border-transparent bg-white/10 text-signal-bright"
-              : "border-white/10 text-ink-muted hover:bg-white/[0.06] hover:text-ink"
-          }`}
+          onClick={() => setShowUpgrade(true)}
+          title="Upgrade to Pro"
+          aria-label="Upgrade to Pro"
+          className="flex h-9 w-full items-center justify-center rounded-el border border-white/10 transition-colors hover:bg-white/[0.06]"
         >
-          <Sparkles className="h-[18px] w-[18px]" strokeWidth={1.75} />
+          <GradientText
+            colors={UPGRADE_GRADIENT}
+            animationSpeed={4}
+            className="!m-0 !p-0 text-[13px] font-extrabold uppercase leading-none tracking-tight [backdrop-filter:none]"
+          >
+            Pro
+          </GradientText>
         </button>
-      </div>
+        <ComingSoonDialog feature={showUpgrade ? "Upgrade to Pro" : null} onClose={() => setShowUpgrade(false)} />
+      </>
     );
   }
 
   return (
-    <div className={mode === "pro" ? "ai-frame-soft" : undefined}>
+    <>
       <div className="glass-panel flex items-center gap-1 !rounded-full p-1">
-        <button
-          type="button"
-          onClick={() => setMode("basic")}
-          aria-pressed={mode === "basic"}
-          className={`flex-1 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-            mode === "basic" ? "bg-white/10 text-ink" : "text-ink-muted hover:text-ink"
-          }`}
+        <div
+          aria-pressed="true"
+          className="pill-glow flex-shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium text-ink"
         >
           Basic
-        </button>
+        </div>
         <button
           type="button"
-          onClick={() => setMode("pro")}
-          aria-pressed={mode === "pro"}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-            mode === "pro" ? "bg-white/10 text-ink" : "text-ink-muted hover:text-ink"
-          }`}
+          onClick={() => setShowUpgrade(true)}
+          className="flex flex-1 items-baseline justify-center gap-1 rounded-full px-3 py-1.5 transition-colors hover:bg-white/[0.06]"
         >
-          <Sparkles className="h-3.5 w-3.5 text-signal-bright" strokeWidth={1.75} />
-          Pro
+          <span className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">Upgrade to</span>
+          <GradientText
+            colors={UPGRADE_GRADIENT}
+            animationSpeed={4}
+            className="!m-0 !p-0 text-lg font-extrabold leading-none tracking-tight [backdrop-filter:none]"
+          >
+            Pro
+          </GradientText>
         </button>
       </div>
-    </div>
+      <ComingSoonDialog feature={showUpgrade ? "Upgrade to Pro" : null} onClose={() => setShowUpgrade(false)} />
+    </>
   );
 }

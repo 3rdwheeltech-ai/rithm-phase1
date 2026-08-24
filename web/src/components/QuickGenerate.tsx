@@ -3,7 +3,6 @@ import { Music } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Segmented from "./create/Segmented";
 import TickSlider from "./create/TickSlider";
-import JobProgress from "./JobProgress";
 import ErrorToast from "./ErrorToast";
 import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "./SpecularButton";
 import { useGenerate } from "../hooks/useGenerate";
@@ -23,13 +22,20 @@ import {
 /** Three at a time, drawn from the twenty in PROMPT_SUGGESTIONS. */
 const VISIBLE_SUGGESTIONS = 3;
 
+/**
+ * Home's "Music" door means INSTRUMENTAL. A sung track is reachable only from
+ * /create, which is where the lyric controls live — a product decision, and
+ * this one constant is the whole of it if it ever needs reversing.
+ */
+const MUSIC_IS_INSTRUMENTAL = true;
+
 /** "write" is never held as state here — it routes to /create. See below. */
-type LyricMode = "vocal" | "instrumental" | "write";
+type HomeMode = "music" | "write";
 
 export default function QuickGenerate() {
   const nav = useNavigate();
   const [prompt, setPrompt] = useState("");
-  const [lyricMode, setLyricMode] = useState<LyricMode>("vocal");
+  const [homeMode, setHomeMode] = useState<HomeMode>("music");
   const [lengthSeconds, setLengthSeconds] = useState(90);
   const [dismissed, setDismissed] = useState(false);
 
@@ -41,10 +47,10 @@ export default function QuickGenerate() {
   const lensRef = useLens<HTMLDivElement>("md", 24);
   const specularRef = useSpecular<HTMLDivElement>();
 
-  const { generate, stream, busy, error } = useGenerate({
-    onCompleted: (trackId) => {
-      if (trackId) nav(`/track/${trackId}`);
-    },
+  // The quick surface has no lyrics box and sends `lyrics: null`, so the pill
+  // only ever says "generating lyrics" when Music is not instrumental.
+  const { generate, busy, error } = useGenerate({
+    writesLyrics: () => !MUSIC_IS_INSTRUMENTAL,
   });
 
   const canGenerate = prompt.trim().length > 0 && !busy;
@@ -58,6 +64,9 @@ export default function QuickGenerate() {
     setDismissed(false);
     const body: GenerateRequest = {
       prompt: prompt.trim(),
+      // Null, so the server names it — which is the whole reason Home tracks
+      // get a real title for free.
+      title: null,
       // The quick surface takes defaults for everything else; /create is where
       // genre, mood, BPM and instruments live.
       genre: null,
@@ -65,16 +74,20 @@ export default function QuickGenerate() {
       bpm_min: null,
       bpm_max: null,
       instruments: [],
-      vocal: lyricMode !== "instrumental",
+      // These two are one fact stated twice and the API refuses to let them
+      // disagree, so they are derived from the same constant.
+      vocal: !MUSIC_IS_INSTRUMENTAL,
+      lyrics_mode: MUSIC_IS_INSTRUMENTAL ? "instrumental" : "write",
+      voice: "auto",
       length_seconds: lengthSeconds,
       lyrics: null,
+      lyrics_prompt: null,
     };
     generate.mutate(body);
   }
 
   return (
     <div className="animate-rise">
-      <JobProgress stream={stream} />
       {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
 
       <div className="ai-frame">
@@ -98,18 +111,26 @@ export default function QuickGenerate() {
 
           <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <span className="text-xs font-medium text-ink-muted">Vocals</span>
-              <Segmented<LyricMode>
-                ariaLabel="Vocals"
+              {/* "Make", not "Vocals" — with two doors this row no longer
+                  describes vocals, it describes what you get. */}
+              <span className="text-xs font-medium text-ink-muted">Make</span>
+              <Segmented<HomeMode>
+                ariaLabel="What to make"
                 size="sm"
-                value={lyricMode}
+                value={homeMode}
                 // "Write lyrics" is a door, not a mode: the quick surface has
                 // no room for a lyrics editor, so it hands off to /create
-                // rather than sitting there disabled.
-                onChange={(v) => (v === "write" ? nav("/create") : setLyricMode(v))}
+                // rather than sitting there disabled. The prompt travels with
+                // it — throwing away what the user already typed is the one
+                // thing about the old three-door row that was a bug rather
+                // than a design choice.
+                onChange={(v) =>
+                  v === "write"
+                    ? nav("/create", { state: { prompt: prompt.trim() } })
+                    : setHomeMode(v)
+                }
                 options={[
-                  { value: "vocal", label: "Sung" },
-                  { value: "instrumental", label: "Instrumental" },
+                  { value: "music", label: "Music" },
                   {
                     value: "write",
                     label: "Write lyrics",

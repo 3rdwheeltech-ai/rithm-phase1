@@ -1,6 +1,13 @@
-import type { TrackSummary } from "../types/api";
+import { TITLE_MAX_LENGTH, type TrackSummary } from "../types/api";
 
-const TITLE_MAX_LENGTH = 48;
+/**
+ * The bound on a DERIVED name, which is not the bound on a real one.
+ * A title the user typed (or the server wrote) is capped at the column's
+ * TITLE_MAX_LENGTH; a name chopped out of a prompt is held shorter than that
+ * on purpose, because it is a label rather than a name and a long one reads
+ * as a truncated sentence.
+ */
+const DERIVED_TITLE_MAX_LENGTH = 48;
 
 /**
  * Filler that opens a prompt but never belongs in a name, stripped in order and
@@ -47,15 +54,23 @@ function clip(text: string, max: number): string {
 /**
  * A display name for a track.
  *
- * The API has no `title` — `catalog.tracks` stores the prompt and nothing that
- * names the piece. Rather than invent a field the backend cannot round-trip,
- * derive a label from the prompt and keep the full text available as a tooltip.
+ * Prefers the real name — `catalog.tracks.title`, written by the user or by the
+ * server's title model at submit — and falls back to deriving one from the
+ * prompt.
  *
- * The derivation is the whole product here, so it is pinned by track.test.ts:
- * the first clause of a prompt is usually a good name, but only once the
- * instruction wrapper people type around it is taken off the front.
+ * The derivation is NOT legacy. Every track created before the title column
+ * existed has `title === null`, and there are more of those than of the new
+ * ones; deleting it would rename the whole existing library "Untitled track".
+ * The server carries a byte-identical port of it in
+ * `api/app/modules/generation/authoring.py` for exactly the same reason, and
+ * track.test.ts is the reference both are pinned to: the first clause of a
+ * prompt is usually a good name, but only once the instruction wrapper people
+ * type around it is taken off the front.
  */
-export function trackTitle(track: Pick<TrackSummary, "prompt">): string {
+export function trackTitle(track: Pick<TrackSummary, "prompt" | "title">): string {
+  const named = track.title?.trim();
+  if (named) return clip(named, TITLE_MAX_LENGTH);
+
   const prompt = track.prompt.replace(/\s+/g, " ").trim();
   if (!prompt) return "Untitled track";
 
@@ -68,7 +83,7 @@ export function trackTitle(track: Pick<TrackSummary, "prompt">): string {
   // a name, and its own words beat "Untitled track".
   if (!label.trim()) label = firstClause;
 
-  label = clip(label.replace(/[\s,;:–—-]+$/, ""), TITLE_MAX_LENGTH);
+  label = clip(label.replace(/[\s,;:–—-]+$/, ""), DERIVED_TITLE_MAX_LENGTH);
   if (!label) return "Untitled track";
 
   // Only the first letter — anything more would flatten "lo-fi" and "EDM".

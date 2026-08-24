@@ -76,11 +76,11 @@ class CatalogService:
         insert_track = text(
             f"""
             INSERT INTO {TRACKS_TABLE}
-                (id, user_id, source_job_id, genre, mood, bpm, vocal,
+                (id, user_id, source_job_id, title, genre, mood, bpm, vocal,
                  length_seconds, prompt, lyrics, params, s3_wav_key,
                  s3_mp3_key, waveform_hash)
             VALUES
-                (:id, :user_id, :source_job_id, :genre, :mood, :bpm,
+                (:id, :user_id, :source_job_id, :title, :genre, :mood, :bpm,
                  :vocal, :length_seconds, :prompt, :lyrics,
                  CAST(:params AS JSONB),
                  :s3_wav_key, :s3_mp3_key, :waveform_hash)
@@ -97,6 +97,9 @@ class CatalogService:
                     "source_job_id": str(source_job_id),
                     # Denormalized out of params so list/filter queries can be
                     # indexed without unpacking JSONB on every row.
+                    # NULL only for a job submitted by an API old enough not to
+                    # have resolved one — the generate route always sends one.
+                    "title": params.get("title"),
                     "genre": params.get("genre"),
                     "mood": params.get("mood"),
                     "bpm": params.get("bpm"),

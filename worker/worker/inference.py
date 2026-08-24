@@ -124,6 +124,7 @@ class MusicModel(Protocol):
         length_s: int,
         seed: int,
         lyrics: str | None,
+        voice: str,
     ) -> Path: ...
 
 
@@ -132,6 +133,7 @@ def _compose_caption(
     genre: str | None,
     mood: str | None,
     instruments: list[str],
+    voice: str = "auto",
 ) -> str:
     """
     Collapse the user's prompt and the GMC controls into one caption.
@@ -147,12 +149,21 @@ def _compose_caption(
     bpm and vocal are deliberately NOT in here: bpm has its own field on
     /release_task, and vocal is expressed through `lyrics`. Putting them in the
     caption as well would condition the model on the same instruction twice.
+
+    The requested vocal GENDER is the exception, and the caption is the only
+    place it can go: ACE-Step has no gender field, and `lyrics` is already
+    occupied by the three-state vocal switch. It sits after mood and before
+    instruments — a property of the performance, not of the arrangement — and
+    "auto" appends nothing at all, which is what keeps the pinned caption
+    above byte-identical for every request that predates this parameter.
     """
     parts = [prompt.strip()]
     if genre:
         parts.append(genre)
     if mood:
         parts.append(mood)
+    if voice in ("female", "male"):
+        parts.append(f"{voice} vocals")
     parts.extend(instruments)
     return ", ".join(part for part in parts if part)
 
@@ -325,8 +336,10 @@ class AceStepHttpModel:
         length_s: int,
         seed: int,
         lyrics: str | None = None,
+        voice: str = "auto",
     ) -> Path:
-        caption = _compose_caption(prompt, genre, mood, instruments)
+        # The gender rides inside `caption`; /release_task gains no field.
+        caption = _compose_caption(prompt, genre, mood, instruments, voice)
         payload: dict[str, Any] = {
             "task_type": self._task_type,
             "caption": caption,
@@ -615,6 +628,9 @@ def run_inference(model: MusicModel | None, job: dict[str, Any]) -> Path:
         length_s=length,
         seed=int(params["seed"]),
         lyrics=params.get("lyrics"),
+        # .get with a default, not [...]: every job already in the SQS queue,
+        # and every parent track's params, predates this field.
+        voice=params.get("voice", "auto"),
     )
 
     # Verify, do not trust. The model server can report success and produce

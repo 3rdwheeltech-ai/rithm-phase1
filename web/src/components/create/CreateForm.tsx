@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Lock, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { useCreateUI } from "../../store/createUI";
 import { useGenerate } from "../../hooks/useGenerate";
 import { useLens } from "../../lib/useLens";
@@ -9,14 +9,13 @@ import { formatDuration } from "../../lib/track";
 import { cn } from "../../lib/cn";
 import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 import { useShuffledPicks } from "../../lib/useShuffledPicks";
-import JobProgress from "../JobProgress";
 import ErrorToast from "../ErrorToast";
 import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "../SpecularButton";
 import Segmented from "./Segmented";
 import TickSlider from "./TickSlider";
 import Switch from "./Switch";
 import Select, { type SelectOption } from "./Select";
-import ComingSoon, { COMING_SOON_DETAIL, ComingSoonTag } from "./ComingSoon";
+import ComingSoon, { ComingSoonTag } from "./ComingSoon";
 import {
   BPM_MAX,
   BPM_MIN,
@@ -24,28 +23,31 @@ import {
   LENGTH_MAX_SECONDS,
   LENGTH_MIN_SECONDS,
   LYRICS_MAX_LENGTH,
+  LYRICS_PROMPT_MAX_LENGTH,
   MAX_INSTRUMENTS,
   MOODS,
   PROMPT_MAX_LENGTH,
+  TITLE_MAX_LENGTH,
   type GenerateRequest,
   type Genre,
+  type LyricsMode,
   type Mood,
+  type Voice,
 } from "../../types/api";
 
 type Complexity = "simple" | "advanced";
-type LyricMode = "vocal" | "instrumental" | "write" | "describe";
 
 /**
  * The API accepts exactly:
- *   prompt, genre, mood, bpm_min, bpm_max, instruments[<=10], vocal,
- *   length_seconds, lyrics
+ *   prompt, title, genre, mood, bpm_min, bpm_max, instruments[<=10], vocal,
+ *   voice, length_seconds, lyrics_mode, lyrics, lyrics_prompt
  *
- * Everything else here — describe, thinking, creativity, language, key, time
- * signature, seed, title — is rendered DISABLED with a visible "Coming soon"
- * tag and a hover explanation, so the shape of the product stays legible
- * without anyone mistaking an unbuilt control for a broken one. The tag and
- * the tooltip both come from <ComingSoon>, which exists because a `title` on a
- * disabled control never fires.
+ * Everything else here — thinking, creativity, language, key, time signature,
+ * seed — is rendered DISABLED with a visible "Coming soon" tag and a hover
+ * explanation, so the shape of the product stays legible without anyone
+ * mistaking an unbuilt control for a broken one. The tag and the tooltip both
+ * come from <ComingSoon>, which exists because a `title` on a disabled control
+ * never fires.
  */
 
 /** Eight at a time, drawn from the twenty in INSTRUMENT_SUGGESTIONS. */
@@ -61,20 +63,30 @@ Neon on the wet street, engine running low
 [chorus]
 …`;
 
+const LYRIC_BRIEF_PLACEHOLDER = "e.g. a late drive home after a fight nobody won";
+
 const SECTION_LABEL = "eyebrow";
 const FIELD_LABEL = "text-xs font-medium text-ink-muted";
 
 export default function CreateForm() {
-  const nav = useNavigate();
   const setPlayerHeight = useCreateUI((s) => s.setPlayerHeight);
+  // Home's "Write lyrics" door hands the prompt over in router state rather
+  // than throwing away what the user already typed.
+  const handedOver = (useLocation().state as { prompt?: string } | null)?.prompt;
 
   const [complexity, setComplexity] = useState<Complexity>("simple");
   // Write is the landing state: the lyrics editor is the reason most people
   // open this page, and an empty box still means "you write the words", so
   // defaulting here costs nothing for the users who never touch it.
-  const [lyricMode, setLyricMode] = useState<LyricMode>("write");
-  const [prompt, setPrompt] = useState("");
+  const [lyricMode, setLyricMode] = useState<LyricsMode>("write");
+  const [prompt, setPrompt] = useState(handedOver ?? "");
+  const [title, setTitle] = useState("");
+  const [voice, setVoice] = useState<Voice>("auto");
+  // TWO strings, not one shared box. Switching Write→Prompt→Write must not
+  // hand a half-written verse to the lyricist as if it were a brief, and must
+  // not lose it either.
   const [lyrics, setLyrics] = useState("");
+  const [lyricPrompt, setLyricPrompt] = useState("");
   const [genre, setGenre] = useState<Genre | "">("");
   const [mood, setMood] = useState<Mood | "">("");
   const [instruments, setInstruments] = useState<string[]>([]);
@@ -98,11 +110,14 @@ export default function CreateForm() {
   const lensRef = useLens<HTMLDivElement>("md", 24);
   const specularRef = useSpecular<HTMLDivElement>();
 
-  const { generate, stream, busy, error } = useGenerate({
-    onCompleted: (trackId) => {
-      if (trackId) nav(`/track/${trackId}`);
-    },
+  // Same rule the request body uses below: only Write mode with something in
+  // the box counts as user lyrics; everything else leaves the words to the model.
+  const { generate, busy, error } = useGenerate({
+    writesLyrics: () =>
+      lyricMode !== "instrumental" && !(lyricMode === "write" && lyrics.trim().length > 0),
   });
+
+  const instrumental = lyricMode === "instrumental";
 
   // Publish the form's rendered height so the docked Player can grow with it.
   useEffect(() => {
@@ -140,42 +155,74 @@ export default function CreateForm() {
     setDismissed(false);
     const body: GenerateRequest = {
       prompt: prompt.trim(),
+      // Empty means "name it for me" — null, never "", because the server
+      // treats a blank title as a name it has to honour.
+      title: title.trim() || null,
       genre: genre === "" ? null : genre,
       mood: mood === "" ? null : mood,
       // Both or neither — the API validates the pair, so never send one alone.
       bpm_min: tempoAuto ? null : bpmMin,
       bpm_max: tempoAuto ? null : bpmMax,
       instruments,
-      vocal: lyricMode !== "instrumental",
+      // One fact stated twice, and the API refuses to let the two disagree.
+      vocal: !instrumental,
+      lyrics_mode: lyricMode,
+      // A gender for a track with no singer is meaningless; the API normalises
+      // it anyway, but sending "auto" says what we mean.
+      voice: instrumental ? "auto" : voice,
       length_seconds: lengthSeconds,
-      // Only in Write mode, and only if there is anything to send — "" and
-      // null both mean "you write the words", and null is what the API wants.
-      // Sent alongside vocal=false is a 422 by design; the mode check is what
-      // guarantees the two can never disagree.
+      // Exactly one of these two is ever non-null, and lyrics_mode says which.
+      // The API 422s every other combination, so the mode check here is what
+      // guarantees the client never sends one. "" and null both mean "you
+      // write the words", and null is what the API wants.
       lyrics: lyricMode === "write" && lyrics.trim() ? lyrics.trim() : null,
+      lyrics_prompt: lyricMode === "prompt" && lyricPrompt.trim() ? lyricPrompt.trim() : null,
     };
     generate.mutate(body);
   }
+
+  /**
+   * Optional, and first in both forms. "Leave empty and RITHM names it" is the
+   * whole contract — the server writes one from the style brief and the
+   * lyrics, and the box exists so anyone who already knows the name can say so
+   * up front. There is no rename afterwards yet, which is exactly why this is
+   * here rather than only in Advanced.
+   */
+  const titleSection = (
+    <section className="mb-5">
+      <div className="mb-2 flex items-center justify-between">
+        <span className={SECTION_LABEL}>Track title</span>
+        <span className="text-2xs text-ink-faint">Optional</span>
+      </div>
+      <input
+        value={title}
+        maxLength={TITLE_MAX_LENGTH}
+        onChange={(e) => setTitle(e.target.value)}
+        aria-label="Track title"
+        placeholder="Leave empty and RITHM names it"
+        className="glass-input"
+      />
+    </section>
+  );
 
   const vocalsSection = (
     <section className="mb-5">
       <div className="mb-2.5 flex items-center justify-between">
         <span className={SECTION_LABEL}>Vocals</span>
-        <Segmented<LyricMode>
+        <Segmented<LyricsMode>
           ariaLabel="Vocal mode"
           size="sm"
           value={lyricMode}
           onChange={setLyricMode}
           options={[
             { value: "write", label: "Write" },
-            { value: "vocal", label: "Generate" },
+            { value: "prompt", label: "Prompt" },
             { value: "instrumental", label: "Instrumental" },
-            { value: "describe", label: "Describe", disabled: true, title: COMING_SOON_DETAIL },
           ]}
         />
       </div>
 
-      {lyricMode === "write" ? (
+      {lyricMode === "write" && (
         <>
           <textarea
             value={lyrics}
@@ -197,7 +244,8 @@ export default function CreateForm() {
                 </>
               ) : (
                 // The empty state has to say what happens if they just hit
-                // Create, because Write is where the page opens.
+                // Create, because Write is where the page opens — and now
+                // something actually keeps this promise.
                 <>Leave this empty and RITHM will write the words for you.</>
               )}
             </p>
@@ -208,17 +256,46 @@ export default function CreateForm() {
             )}
           </div>
         </>
-      ) : (
+      )}
+
+      {lyricMode === "prompt" && (
+        <>
+          {/* Prose treatment, NOT the lyric sheet's mono/tall box. It is a
+              sentence, and looking like a lyric sheet is exactly what would
+              make people paste lyrics into it. */}
+          <textarea
+            value={lyricPrompt}
+            maxLength={LYRICS_PROMPT_MAX_LENGTH}
+            onChange={(e) => setLyricPrompt(e.target.value)}
+            aria-label="What the song is about"
+            placeholder={LYRIC_BRIEF_PLACEHOLDER}
+            className="glass-input min-h-[72px] resize-none leading-relaxed"
+          />
+          <div className="mt-1 flex items-start justify-between gap-3">
+            <p className="text-2xs leading-snug text-ink-faint">
+              {lyricPrompt.trim()
+                ? "RITHM writes the words from this."
+                : "Leave this empty and RITHM will write words to match your style alone."}
+            </p>
+            {lyricPrompt.length > LYRICS_PROMPT_MAX_LENGTH - 100 && (
+              <span className="shrink-0 font-mono text-2xs tabular-nums text-ink-faint">
+                {lyricPrompt.length} / {LYRICS_PROMPT_MAX_LENGTH}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {instrumental && (
         <div className="rounded-el border border-white/10 bg-white/[0.03] px-4 py-3">
           <p className="text-xs leading-relaxed text-ink-faint">
-            {lyricMode === "instrumental"
-              ? "Instrumental — no vocals. RITHM will compose music only."
-              : "RITHM writes the words to match your description. Switch to Write to supply your own."}
+            Instrumental — no vocals. RITHM will compose music only.
           </p>
           {/* The textarea unmounts on a mode switch but the state survives, so
               without this the words the user typed vanish with no trace and are
-              silently left out of the request. Say so instead. The payload rule
-              at onCreate does not change: these modes mean "not my words". */}
+              silently left out of the request. Say so instead. Write and Prompt
+              no longer discard each other's content, so this fires ONLY here —
+              anywhere else it would be a lie. */}
           {lyrics.trim() && (
             <p className="mt-2 text-2xs leading-snug text-ink-faint">
               Your {lyrics.trim().length} characters of lyrics are saved but will not be
@@ -329,7 +406,6 @@ export default function CreateForm() {
       className="lg-lens w-full p-4 sm:p-6"
       style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
     >
-      <JobProgress stream={stream} />
       {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
 
       <div className="mb-5 flex items-center justify-between">
@@ -349,6 +425,7 @@ export default function CreateForm() {
         <div className="create-cq mb-6 animate-fade-in">
           <div className="create-cols">
             <div className="min-w-0">
+              {titleSection}
               {vocalsSection}
               {stylesSection}
 
@@ -477,6 +554,34 @@ export default function CreateForm() {
                 )}
               </div>
 
+              <div>
+                <span className={FIELD_LABEL}>Voice</span>
+                <div className="mt-1.5">
+                  {/* Auto sits in the MIDDLE, not first: the control reads as a
+                      slider between two poles with a neutral centre, which is
+                      what it is. */}
+                  <Segmented<Voice>
+                    ariaLabel="Vocal gender"
+                    size="sm"
+                    value={voice}
+                    onChange={setVoice}
+                    options={[
+                      { value: "male", label: "Male", disabled: instrumental },
+                      { value: "auto", label: "Auto", disabled: instrumental },
+                      { value: "female", label: "Female", disabled: instrumental },
+                    ]}
+                  />
+                </div>
+                <p className="mt-1 text-2xs text-ink-faint">
+                  {/* Not filler. ACE-Step conditions on a caption token — there
+                      is no gender parameter — and promising a guaranteed
+                      gender is a support ticket. */}
+                  {instrumental
+                    ? "No vocals to shape."
+                    : "A hint, not a guarantee — the model decides the timbre."}
+                </p>
+              </div>
+
               {/* Below here: no API field. Rendered so the shape of the
                   product is legible, disabled so nobody submits into a 422,
                   and tagged so nobody reports them as broken. */}
@@ -544,24 +649,12 @@ export default function CreateForm() {
                   className="glass-input tabular-nums disabled:opacity-40"
                 />
               </ComingSoon>
-
-              <ComingSoon>
-                <div className="mb-1.5 flex items-center gap-2">
-                  <span className={`${FIELD_LABEL} opacity-40`}>Song title</span>
-                  <ComingSoonTag />
-                </div>
-                <input
-                  disabled
-                  aria-label="Song title"
-                  placeholder="Named from your prompt"
-                  className="glass-input disabled:opacity-40"
-                />
-              </ComingSoon>
             </aside>
           </div>
         </div>
       ) : (
         <>
+          {titleSection}
           {vocalsSection}
           {stylesSection}
           <div className="mb-6">

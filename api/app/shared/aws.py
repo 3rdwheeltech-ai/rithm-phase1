@@ -22,6 +22,8 @@ from typing import Any
 
 import boto3
 import structlog
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
@@ -30,6 +32,7 @@ logger = structlog.get_logger()
 
 _sqs_client: Any = None
 _s3_client: Any = None
+_bedrock_runtime_client: Any = None
 
 
 def _client(service: str) -> Any:
@@ -62,11 +65,41 @@ def _s3() -> Any:
     return _s3_client
 
 
+def _bedrock_client() -> Any:
+    """
+    Lazily build the bedrock-runtime client. Deliberately does NOT honour
+    `aws_endpoint_url`.
+
+    LocalStack has no Bedrock. Sending this at :4566 turns a call that is
+    supposed to degrade quietly into a connection error on every single
+    submit — a failure mode that appears only locally, which is the worst
+    kind. That is why this does not reuse `_client()`.
+
+    One attempt, short timeouts: the caller already has an asyncio timeout and
+    a fallback, and botocore's default three retries would blow through both.
+    A retry storm, not the price per call, is the thing to watch here.
+    """
+    global _bedrock_runtime_client
+    if _bedrock_runtime_client is None:
+        settings = get_settings()
+        _bedrock_runtime_client = boto3.client(
+            "bedrock-runtime",
+            region_name=settings.aws_region,
+            config=Config(
+                connect_timeout=2,
+                read_timeout=10,
+                retries={"max_attempts": 1, "mode": "standard"},
+            ),
+        )
+    return _bedrock_runtime_client
+
+
 def reset_clients() -> None:
     """Drop cached clients. Test helper — not used at runtime."""
-    global _sqs_client, _s3_client
+    global _sqs_client, _s3_client, _bedrock_runtime_client
     _sqs_client = None
     _s3_client = None
+    _bedrock_runtime_client = None
 
 
 async def send_sqs_message(
@@ -104,3 +137,43 @@ def presign_get(key: str, expires: int = 900) -> str:
         ExpiresIn=expires,
     )
     return str(url)
+
+
+async def converse(
+    *, model_id: str, system: str, user: str, max_tokens: int, temperature: float
+) -> str | None:
+    """
+    One Bedrock Converse turn, or None.
+
+    Converse rather than InvokeModel because it is the one request shape that
+    is identical across Anthropic and Amazon models — which is the only reason
+    two different providers can share this function.
+
+    Returns None on ANY failure: the feature switched off, throttling, denied
+    model access, a malformed response, a network blip. Every caller has a
+    fallback and a Bedrock outage must never turn a 202 into a 500, so raising
+    would only move the try/except one frame up.
+    """
+    settings = get_settings()
+    if not settings.bedrock_enabled:
+        # Not a failure — the default posture. Local, CI and tests take the
+        # fallback paths, which is also free coverage of them.
+        logger.debug("bedrock_disabled", model_id=model_id)
+        return None
+
+    try:
+        response = await run_in_threadpool(
+            _bedrock_client().converse,
+            modelId=model_id,
+            system=[{"text": system}],
+            messages=[{"role": "user", "content": [{"text": user}]}],
+            inferenceConfig={"maxTokens": max_tokens, "temperature": temperature},
+        )
+        return str(response["output"]["message"]["content"][0]["text"])
+    except (ClientError, BotoCoreError, KeyError, IndexError, TypeError) as exc:
+        # The exception CLASS, never the message: a Bedrock error body can
+        # quote the prompt back, and prompts carry user content.
+        logger.warning(
+            "bedrock_converse_failed", model_id=model_id, error=type(exc).__name__
+        )
+        return None

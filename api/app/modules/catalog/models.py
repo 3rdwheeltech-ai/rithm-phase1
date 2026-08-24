@@ -105,6 +105,9 @@ class TrackRow:
     id: UUID
     user_id: UUID
     source_job_id: UUID
+    # NULL on every track written before the title column existed, which is
+    # why the client keeps its prompt-derived fallback.
+    title: str | None
     genre: str | None
     mood: str | None
     bpm: int | None
@@ -127,6 +130,7 @@ class TrackRow:
             id=row["id"],
             user_id=row["user_id"],
             source_job_id=row["source_job_id"],
+            title=row["title"],
             genre=row["genre"],
             mood=row["mood"],
             bpm=row["bpm"],
@@ -173,7 +177,7 @@ class PromptRow:
 # that want it should ask for it explicitly rather than pay for the JSONB on
 # every list query.
 TRACK_COLUMNS = (
-    "id, user_id, source_job_id, genre, mood, bpm, vocal, length_seconds, "
+    "id, user_id, source_job_id, title, genre, mood, bpm, vocal, length_seconds, "
     "inference_steps, prompt, lyrics, ref_audio_s3_key, s3_wav_key, "
     "s3_mp3_key, waveform_hash, created_at, updated_at, deleted_at"
 )
@@ -181,6 +185,8 @@ TRACK_COLUMNS = (
 # The ONE query that needs `params`: a variation copies the parent's generation
 # parameters wholesale. Given its own column list rather than widening
 # TRACK_COLUMNS, so every list query does not start paying for the JSONB.
+# `title` is deliberately absent: a variation reads `params`, which already
+# carries it, so adding the column here would fetch the same string twice.
 PARENT_TRACK_COLUMNS = "id, user_id, prompt, params, length_seconds"
 
 PROMPT_HISTORY_COLUMNS = "id, prompt, delta_command, kind, created_at"

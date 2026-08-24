@@ -6,7 +6,6 @@ import { useGenerate } from "../hooks/useGenerate";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
 import { usePlayer } from "../store/player";
 import { formatDuration, trackTitle } from "../lib/track";
-import JobProgress from "../components/JobProgress";
 import ErrorToast from "../components/ErrorToast";
 import Segmented from "../components/create/Segmented";
 import CoverArt from "../components/CoverArt";
@@ -31,11 +30,9 @@ export default function TrackDetail() {
   const [mode, setMode] = useState<RefinementMode>("fresh");
   const [dismissed, setDismissed] = useState(false);
 
-  const { variation, refine, stream, busy, error } = useGenerate({
-    onCompleted: (trackId) => {
-      if (trackId) nav(`/track/${trackId}`);
-    },
-  });
+  // Variations and refinements carry the source track's words forward, so the
+  // model is never starting from a blank page here.
+  const { variation, refine, busy, error } = useGenerate({ writesLyrics: () => false });
 
   if (isLoading) {
     return (
@@ -59,7 +56,6 @@ export default function TrackDetail() {
 
   return (
     <div className="flex flex-1 flex-col py-6 sm:py-8">
-      <JobProgress stream={stream} />
       {!dismissed && <ErrorToast error={error} onDismiss={() => setDismissed(true)} />}
 
       <div className="mx-auto w-full max-w-[860px] animate-fade-in">

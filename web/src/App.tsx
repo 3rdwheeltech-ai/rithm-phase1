@@ -13,6 +13,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import RequireOnboarding from "./components/RequireOnboarding";
 import GlassFilters from "./components/GlassFilters";
 import StudioField from "./components/StudioField";
+import GenerationPill from "./components/GenerationPill";
 import { useAuth } from "./store/auth";
 
 // Neither route is on the path to making a track, and both carry a catalogue of
@@ -40,12 +41,14 @@ export default function App() {
   return (
     <BrowserRouter>
       {/*
-        Both sit outside <Routes> so the room and its lens filters survive
-        navigation — the field would restart its pulse on every route change if
-        it were mounted per page, and the filter defs are document-global.
+        All three sit outside <Routes> so they survive navigation — the field
+        would restart its pulse on every route change if it were mounted per
+        page, the filter defs are document-global, and the generation pill owns
+        the job stream, which has to outlive the form that started it.
       */}
       <StudioField />
       <GlassFilters />
+      <GenerationPill />
       <Routes>
         <Route
           path="/login"

@@ -28,6 +28,15 @@ Instrument = Annotated[str, Field(min_length=1, max_length=40)]
 # Mirrored in web/src/types/api.ts and pinned there, the same way prompt's 2000 is.
 LYRICS_MAX_LENGTH = 3000
 
+# Bounded well under the VARCHAR(120) column so a title can never be the thing
+# that fails an INSERT. Mirrored in web/src/types/api.ts and pinned there, the
+# same way prompt's 2000 is.
+TITLE_MAX_LENGTH = 80
+
+# What the lyric prompt box accepts in Prompt mode. Short on purpose: it is a
+# brief, not a draft. The draft is what `write` mode is for.
+LYRICS_PROMPT_MAX_LENGTH = 600
+
 # Enum lists must match the catalog.tracks CHECKs; the Day-4 UI dropdowns
 # read from these.
 
@@ -54,6 +63,41 @@ class Mood(StrEnum):
     DRAMATIC = "Dramatic"
 
 
+class LyricsMode(StrEnum):
+    """
+    Where the words come from — and ONLY that.
+
+    It does not decide whether Bedrock is asked: `vocal and lyrics is None` is
+    what does, in both WRITE and PROMPT. All this says is whether
+    `lyrics_prompt` is honoured.
+    """
+
+    WRITE = "write"  # the user's own words (or an empty box)
+    PROMPT = "prompt"  # a brief; the model writes the words
+    INSTRUMENTAL = "instrumental"
+
+
+class Voice(StrEnum):
+    """
+    The requested lead vocal. A hint the worker folds into ACE-Step's caption —
+    there is no gender parameter to set, so it is never a guarantee.
+    """
+
+    AUTO = "auto"
+    FEMALE = "female"
+    MALE = "male"
+
+
+# Where the words in `lyrics` came from. The one field that makes this feature
+# debuggable from a `SELECT params FROM catalog.tracks`.
+#   user     they typed the words
+#   model    the authoring model wrote them
+#   acestep  the model was asked and could not answer; ACE-Step's own planner
+#            gets the empty field, exactly as it did before this existed
+#   None     instrumental — there are no words
+LyricsSource = Literal["user", "model", "acestep"]
+
+
 SSEEventType = Literal["queued", "running", "completed", "failed"]
 
 
@@ -68,6 +112,10 @@ class GenerationParams(BaseModel):
     """Internal params — stored in request_payload, sent in the SQS envelope."""
 
     prompt: str = Field(min_length=1, max_length=2000)
+    # The track's name. Supplied by the user or written by the title model at
+    # submit; never null from the generate route, because write_title has a
+    # heuristic floor. A variation inherits its parent's unchanged.
+    title: str | None = Field(default=None, max_length=TITLE_MAX_LENGTH)
     genre: Genre | None = None
     mood: Mood | None = None
     # The resolved scalar the worker conditions on, and the range it came from.
@@ -84,6 +132,14 @@ class GenerationParams(BaseModel):
     # them. Never both this and vocal=False — GenerateRequest rejects that pair
     # at the edge, and the worker forces [Instrumental] if one ever gets through.
     lyrics: str | None = Field(default=None, max_length=LYRICS_MAX_LENGTH)
+    # A caption hint the worker folds in after mood. Params-JSONB only: nothing
+    # lists or filters on it, so it needs no column.
+    voice: Voice = Voice.AUTO
+    # Provenance, kept for the same reason bpm_min/bpm_max are kept next to the
+    # resolved bpm: the resolved value alone cannot answer "where did this come
+    # from?". The worker reads neither.
+    lyrics_prompt: str | None = Field(default=None, max_length=LYRICS_PROMPT_MAX_LENGTH)
+    lyrics_source: LyricsSource | None = None
     # Minted API-side at submit, never by the worker, and never null on the
     # wire from Day 3 onward — it is what makes a generation reproducible and
     # what makes "a variation is the same params with a different seed"
@@ -120,6 +176,10 @@ def resolve_bpm(lo: int | None, hi: int | None) -> int | None:
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
+    # Optional: an empty box means "name it for me", which is what the title
+    # model is for. Not the same as a blank string — the validator below
+    # normalises one into the other.
+    title: str | None = Field(default=None, max_length=TITLE_MAX_LENGTH)
     genre: Genre | None = None
     mood: Mood | None = None
     bpm_min: int | None = Field(default=None, ge=20, le=300)
@@ -128,6 +188,12 @@ class GenerateRequest(BaseModel):
     vocal: bool = True
     length_seconds: int = Field(default=90, ge=10, le=180)
     lyrics: str | None = Field(default=None, max_length=LYRICS_MAX_LENGTH)
+    # Defaulted, not required, so an SPA cached in a browser keeps working
+    # through the deploy window — the exact concern commit e659016 had to
+    # solve once already.
+    lyrics_mode: LyricsMode = LyricsMode.WRITE
+    lyrics_prompt: str | None = Field(default=None, max_length=LYRICS_PROMPT_MAX_LENGTH)
+    voice: Voice = Voice.AUTO
 
     @model_validator(mode="after")
     def _bpm_range_is_ordered(self) -> Self:
@@ -140,25 +206,46 @@ class GenerateRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _lyrics_need_vocals(self) -> Self:
+    def _lyric_fields_agree(self) -> Self:
         """
-        Normalise blank lyrics away, then refuse the one contradictory pair.
+        Normalise blank text away, then refuse the pairs that cannot both be true.
 
-        Whitespace has to collapse to None rather than pass through: ACE-Step
-        reads an empty lyrics field as "write your own words", and a box the
-        user tabbed through should mean that, not "sing these three spaces".
+        Three text fields and two flags can disagree in more ways than they can
+        agree, so the biconditional is stated once, here, rather than
+        re-derived at every reader. Blank-to-None first: a box the user tabbed
+        through means "nothing", not "three spaces" — ACE-Step reads an empty
+        lyrics field as "write your own words".
 
-        lyrics + vocal=False is unrepresentable downstream — the worker's
+        lyrics + vocal=False is unrepresentable downstream: the worker's
         [Instrumental] token IS the lyrics field, so one of the two would have
         to silently win. A 422 here means nobody has to guess which.
         """
-        if self.lyrics is not None and not self.lyrics.strip():
-            self.lyrics = None
-        if self.lyrics is not None and not self.vocal:
+        for field in ("title", "lyrics", "lyrics_prompt"):
+            value: str | None = getattr(self, field)
+            if value is None:
+                continue
+            setattr(self, field, value.strip() or None)
+
+        instrumental = self.lyrics_mode is LyricsMode.INSTRUMENTAL
+        if instrumental != (not self.vocal):
+            raise ValueError(
+                "lyrics_mode and vocal must agree — "
+                "'instrumental' means vocal=false and nothing else does"
+            )
+        if instrumental and (self.lyrics or self.lyrics_prompt):
             raise ValueError(
                 "lyrics cannot be supplied with vocal=false — an instrumental "
                 "track has no words to sing"
             )
+        if self.lyrics_mode is LyricsMode.WRITE and self.lyrics_prompt:
+            raise ValueError("lyrics_prompt belongs to lyrics_mode='prompt'")
+        if self.lyrics_mode is LyricsMode.PROMPT and self.lyrics:
+            raise ValueError("lyrics belongs to lyrics_mode='write'")
+        # Not an error: a gender for a track with no singer is meaningless,
+        # not contradictory, and 422-ing a leftover slider position is
+        # user-hostile.
+        if instrumental:
+            self.voice = Voice.AUTO
         return self
 
 

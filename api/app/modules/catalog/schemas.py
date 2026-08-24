@@ -28,6 +28,10 @@ class TrackSummary(BaseModel):
 
     id: UUID
     prompt: str
+    # On the SUMMARY, not detail-only: every list row renders it, which is the
+    # whole point of it being a column. NULL on tracks older than the column,
+    # and the client falls back to deriving a name from the prompt.
+    title: str | None
     genre: str | None
     mood: str | None
     bpm: int | None

@@ -77,7 +77,7 @@ export default function ErrorToast({
   if (!rendered) return null;
   if (typeof document === "undefined") return null;
 
-  // Portalled for the same reason as <JobProgress>: every caller mounts this
+  // Portalled for the same reason as <GenerationPill>: every caller mounts this
   // inside a card with a backdrop-filter, which is a containing block for
   // `fixed`, so in place it anchored to the card instead of the viewport.
   return createPortal(

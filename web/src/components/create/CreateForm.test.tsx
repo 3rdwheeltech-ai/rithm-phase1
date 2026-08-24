@@ -65,15 +65,26 @@ describe("CreateForm", () => {
         "instruments",
         "length_seconds",
         "lyrics",
+        "lyrics_mode",
+        "lyrics_prompt",
         "mood",
         "prompt",
+        "title",
         "vocal",
+        "voice",
       ].sort(),
     );
     // Null, not "" — an empty string is a different instruction to the model.
     expect(body.lyrics).toBeNull();
+    expect(body.lyrics_prompt).toBeNull();
+    // Null means "name it for me"; "" would be a name the server has to honour.
+    expect(body.title).toBeNull();
     expect(body.prompt).toBe("warm lo-fi piano");
     expect(body.vocal).toBe(true);
+    // vocal and lyrics_mode are one fact stated twice; the API 422s a
+    // disagreement, so they are never built independently.
+    expect(body.lyrics_mode).toBe("write");
+    expect(body.voice).toBe("auto");
     expect(body.length_seconds).toBe(90);
     // Auto tempo means BOTH bounds are null — never one alone.
     expect(body.bpm_min).toBeNull();
@@ -89,7 +100,12 @@ describe("CreateForm", () => {
     await user.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(generateBody().vocal).toBe(false);
+    const body = generateBody();
+    expect(body.vocal).toBe(false);
+    expect(body.lyrics_mode).toBe("instrumental");
+    // A gender for a track with no singer is meaningless — send "auto"
+    // whatever the control was left on.
+    expect(body.voice).toBe("auto");
   });
 
   it("blocks submit when bpm_min exceeds bpm_max", async () => {
@@ -207,7 +223,7 @@ describe("CreateForm", () => {
     expect(body.lyrics).toBeNull();
   });
 
-  it("says so when a mode switch leaves written lyrics unused", async () => {
+  it("warns about unused lyrics under Instrumental, and only there", async () => {
     const user = userEvent.setup();
     renderWithProviders(<CreateForm />);
 
@@ -216,12 +232,100 @@ describe("CreateForm", () => {
 
     // The textarea unmounts on the switch, so without a note the text is gone
     // from the screen AND from the request with nothing said about either.
-    await user.click(screen.getByRole("tab", { name: "Generate" }));
+    await user.click(screen.getByRole("tab", { name: "Instrumental" }));
     expect(screen.getByText(/lyrics are saved but will not be used/i)).toBeInTheDocument();
+
+    // Prompt mode does NOT discard them — the two boxes are separate strings —
+    // so the warning there would be a lie.
+    await user.click(screen.getByRole("tab", { name: "Prompt" }));
+    expect(screen.queryByText(/will not be used/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Write" }));
     expect(screen.queryByText(/will not be used/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Your lyrics")).toHaveValue("some words");
+  });
+
+  it("offers the track title on both forms, enabled and optional", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    // Simple first — this is not an Advanced-only control. There is no rename
+    // afterwards, so naming a track up front has to be reachable by default.
+    expect(screen.getByLabelText("Track title")).toBeEnabled();
+
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+    expect(screen.getByLabelText("Track title")).toBeEnabled();
+  });
+
+  it("sends a typed title and leaves an untouched box null", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.type(screen.getByLabelText("Describe the track"), "opera metal");
+    await user.type(screen.getByLabelText("Track title"), "  Midnight Ferry  ");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(generateBody().title).toBe("Midnight Ferry");
+  });
+
+  it("routes Prompt-mode typing into lyrics_prompt, never lyrics", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.type(screen.getByLabelText("Describe the track"), "slow indie rock");
+    await user.click(screen.getByRole("tab", { name: "Prompt" }));
+
+    // The box stays ENABLED and empty is a legitimate submit — Prompt with no
+    // brief means "write words to match the style alone".
+    const brief = screen.getByLabelText("What the song is about");
+    expect(brief).toBeEnabled();
+    await user.type(brief, "a late drive home");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = generateBody();
+    // Exactly one of the two is ever non-null; the API 422s any other pairing.
+    expect(body.lyrics_mode).toBe("prompt");
+    expect(body.lyrics_prompt).toBe("a late drive home");
+    expect(body.lyrics).toBeNull();
+  });
+
+  it("keeps the lyric sheet and the brief in separate boxes", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    await user.type(screen.getByLabelText("Your lyrics"), "[[verse]{enter}neon rain");
+
+    await user.click(screen.getByRole("tab", { name: "Prompt" }));
+    // A half-written verse must NOT arrive at the lyricist as if it were a
+    // brief — that is the whole reason these are two strings and not one.
+    expect(screen.getByLabelText("What the song is about")).toHaveValue("");
+    await user.type(screen.getByLabelText("What the song is about"), "a brief");
+
+    await user.click(screen.getByRole("tab", { name: "Write" }));
+    // ...and it must not be lost on the way back, either.
+    expect(screen.getByLabelText("Your lyrics")).toHaveValue("[verse]\nneon rain");
+  });
+
+  it("sends the chosen voice, and disables the control for an instrumental", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateForm />);
+
+    await user.type(screen.getByLabelText("Describe the track"), "slow indie rock");
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+    await user.click(screen.getByRole("tab", { name: "Female" }));
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(generateBody().voice).toBe("female");
+
+    // Nothing to shape once there is no singer.
+    await user.click(screen.getByRole("tab", { name: "Instrumental" }));
+    expect(screen.getByRole("tab", { name: "Female" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Male" })).toBeDisabled();
+    expect(screen.getByText("No vocals to shape.")).toBeInTheDocument();
   });
 
   it("refills the instrument suggestions as they are used", async () => {
@@ -255,7 +359,9 @@ describe("CreateForm", () => {
     const user = userEvent.setup();
     renderWithProviders(<CreateForm />);
 
-    expect(screen.getByRole("tab", { name: "Describe" })).toBeDisabled();
+    // Describe is gone and Song title is built, so the Vocals row carries no
+    // disabled tab at all any more.
+    expect(screen.queryByRole("tab", { name: "Describe" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Advanced" }));
     expect(screen.getByRole("switch", { name: "Thinking" })).toBeDisabled();
@@ -263,10 +369,10 @@ describe("CreateForm", () => {
     expect(screen.getByLabelText("Vocal language")).toBeDisabled();
     expect(screen.getByLabelText("Key and scale")).toBeDisabled();
     expect(screen.getByLabelText("Seed")).toBeDisabled();
-    expect(screen.getByLabelText("Song title")).toBeDisabled();
 
-    // Every one carries a visible tag, so the state reads without hovering.
-    expect(screen.getAllByText("Coming soon").length).toBeGreaterThanOrEqual(6);
+    // Six, not seven: the track title is built, so its ComingSoon is gone.
+    // Pinned exactly — a count that only ever grows is not a regression guard.
+    expect(screen.getAllByText("Coming soon")).toHaveLength(6);
   });
 
   it("explains each disabled control from an enabled wrapper", async () => {
@@ -278,7 +384,7 @@ describe("CreateForm", () => {
     // fires. The explanation has to hang off an enabled ancestor — this is the
     // regression guard for that.
     const notes = screen.getAllByRole("note");
-    expect(notes.length).toBeGreaterThanOrEqual(6);
+    expect(notes).toHaveLength(6);
     for (const note of notes) {
       expect(note).toHaveAttribute("aria-label", expect.stringContaining("Coming soon"));
       expect(note).not.toBeDisabled();

@@ -43,6 +43,7 @@ pytestmark = [requires_live_db, pytest.mark.asyncio]
 
 _PARAMS: dict[str, Any] = {
     "prompt": "a warm lo-fi loop",
+    "title": "Vinyl Rain",
     "genre": "Lo-Fi",
     "mood": "Calm",
     "bpm": 90,
@@ -168,7 +169,7 @@ async def test_generation_role_can_write_a_track_and_its_prompt(
             await admin_session.execute(
                 text(
                     """
-                SELECT genre, mood, bpm, vocal, length_seconds, prompt,
+                SELECT title, genre, mood, bpm, vocal, length_seconds, prompt,
                        params, s3_wav_key, s3_mp3_key, waveform_hash
                   FROM catalog.tracks WHERE source_job_id = :jid
                 """
@@ -180,6 +181,10 @@ async def test_generation_role_can_write_a_track_and_its_prompt(
         .one()
     )
 
+    # The title column needs NO new grant: 0002 gave rithm_generation
+    # TABLE-level INSERT, and Postgres table-level INSERT covers columns added
+    # later. If this row is missing its title, someone narrowed that grant.
+    assert row["title"] == "Vinyl Rain"
     assert row["genre"] == "Lo-Fi"
     assert row["mood"] == "Calm"
     assert row["bpm"] == 90
@@ -242,6 +247,12 @@ async def test_grant_does_not_expose_track_content(
 
     # ...while the one column the arbiter needs is readable.
     await live_session.execute(text("SELECT source_job_id FROM catalog.tracks LIMIT 1"))
+
+    # ...and the title, added a migration later, joined the DENIED side rather
+    # than quietly widening the grant along with the table.
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        await live_session.execute(text("SELECT title FROM catalog.tracks LIMIT 1"))
+    await live_session.rollback()
 
 
 # ── finalize_job end to end ────────────────────────────────────

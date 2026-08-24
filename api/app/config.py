@@ -53,9 +53,25 @@ class Settings(BaseSettings):
     # SECRET_HASH computed from it (see identity/service.py).
     cognito_app_client_secret: SecretStr = SecretStr("")
 
-    # Bedrock + OpenAI
-    bedrock_haiku_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"
-    openai_api_key: SecretStr = SecretStr("")
+    # ── Bedrock (authoring: lyrics + titles) ────────────────────────────────
+    # OFF by default. Local and CI take the fallback paths, which is both the
+    # correct behaviour without credentials and free coverage of those paths.
+    # The live rithm-api task definition sets BEDROCK_ENABLED=true.
+    bedrock_enabled: bool = False
+    # Cross-region inference profile, hence the `us.` prefix — Haiku 4.5 has no
+    # plain on-demand foundation-model id, and invoking the bare
+    # `anthropic.claude-haiku-4-5-...` returns a ValidationException that reads
+    # like a typo. The prefix is load-bearing, and the task role's policy must
+    # grant BOTH the profile ARN and the underlying regional model ARNs.
+    bedrock_lyrics_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    # The cheapest text model on Bedrock. A title is ~300 tokens in and ~10 out,
+    # so this line item is rounding error.
+    bedrock_title_model_id: str = "amazon.nova-micro-v1:0"
+    # Per-call ceiling. These sit on the submit path, in front of a 202 the user
+    # is watching a button spinner for: a latency budget, not a generosity
+    # setting.
+    bedrock_lyrics_timeout_seconds: float = 8.0
+    bedrock_title_timeout_seconds: float = 4.0
 
     # Operational knobs
     log_level: str = "INFO"

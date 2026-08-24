@@ -4,12 +4,14 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PAGE_SIZE, useTracks, type TracksPage } from "./useTracks";
 import { qk } from "../lib/queryClient";
+import { useAuth } from "../store/auth";
 import type { TrackSummary } from "../types/api";
 
 function track(id: string): TrackSummary {
   return {
     id,
     prompt: "warm lo-fi piano",
+    title: null,
     genre: "Lo-Fi",
     mood: "Calm",
     bpm: 85,
@@ -54,6 +56,15 @@ function setup() {
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  // useTracks is gated on an authed session (see hooks/useTracks.ts) — without
+  // this every case here would sit disabled and isSuccess would never flip.
+  useAuth.setState({
+    idToken: "id.token",
+    refreshToken: "refresh-token",
+    email: "user@example.com",
+    user: { sub: "sub-1", email: "user@example.com" },
+    status: "authed",
+  });
 });
 
 afterEach(() => {

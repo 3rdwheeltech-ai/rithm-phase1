@@ -31,6 +31,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
+from app.modules.generation import authoring
+from app.modules.generation.authoring import AuthoringSpec
 from app.modules.generation.interfaces import ParentTrack
 from app.modules.generation.models import JobKind
 from app.modules.generation.schemas import (
@@ -40,6 +42,7 @@ from app.modules.generation.schemas import (
     GenerationParams,
     JobAccepted,
     JobStatusResponse,
+    LyricsSource,
     RefinementMode,
     RefineRequest,
     SSEEvent,
@@ -174,21 +177,58 @@ async def generate_track(
     body: GenerateRequest,
     user_id: UUID = Depends(require_user),
 ) -> JobAccepted:
-    """Submit a new generation (TTM-01 + the GMC-01..05 controls)."""
+    """
+    Submit a new generation (TTM-01 + the GMC-01..05 controls).
+
+    The one route that resolves lyrics and a title before the envelope is
+    built. Both are best-effort: a failure on either degrades to exactly the
+    behaviour that shipped before they existed, and neither can turn this 202
+    into a 500.
+    """
+    bpm = resolve_bpm(body.bpm_min, body.bpm_max)
+    spec = AuthoringSpec(
+        prompt=body.prompt,
+        genre=body.genre.value if body.genre else None,
+        mood=body.mood.value if body.mood else None,
+        instruments=body.instruments,
+        bpm=bpm,
+        length_seconds=body.length_seconds,
+        voice=body.voice,
+        lyrics_prompt=body.lyrics_prompt,
+    )
+
+    lyrics = body.lyrics
+    lyrics_source: LyricsSource | None = "user" if lyrics else None
+    if body.vocal and lyrics is None:
+        # Covers Prompt mode AND an empty Write box — the promise CreateForm
+        # has been making since Day 4 with nothing behind it. None back means
+        # the authoring model could not answer; ACE-Step's own planner gets the
+        # empty field, exactly as it does today.
+        lyrics = await authoring.write_lyrics(spec)
+        lyrics_source = "model" if lyrics else "acestep"
+
+    # write_title never returns None — it has a prompt-derived floor — so a
+    # generated track always arrives in the library with a name.
+    title = body.title or await authoring.write_title(spec, lyrics=lyrics)
+
     params = GenerationParams(
         prompt=body.prompt,
+        title=title,
         genre=body.genre,
         mood=body.mood,
         # Both the resolved scalar and the range it came from: the worker
         # conditions on bpm, catalog indexes it, and the Day-4 UI needs the
         # range back to repopulate its slider.
-        bpm=resolve_bpm(body.bpm_min, body.bpm_max),
+        bpm=bpm,
         bpm_min=body.bpm_min,
         bpm_max=body.bpm_max,
         instruments=body.instruments,
         vocal=body.vocal,
         length_seconds=body.length_seconds,
-        lyrics=body.lyrics,
+        lyrics=lyrics,
+        voice=body.voice,
+        lyrics_prompt=body.lyrics_prompt,
+        lyrics_source=lyrics_source,
         seed=new_seed(),
     )
     return await _submit(user_id=user_id, kind="generate", params=params)

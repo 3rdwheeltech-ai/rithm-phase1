@@ -45,9 +45,31 @@ export const MAX_INSTRUMENTS = 10;
 export const PROMPT_MAX_LENGTH = 2000;
 export const LYRICS_MAX_LENGTH = 3000;
 export const DELTA_COMMAND_MAX_LENGTH = 500;
+/** Bounded well under the VARCHAR(120) column, so a title never fails an INSERT. */
+export const TITLE_MAX_LENGTH = 80;
+/** A brief, not a draft. The draft is what `write` mode is for. */
+export const LYRICS_PROMPT_MAX_LENGTH = 600;
+
+/**
+ * Where the words come from — and only that. It does not decide whether the
+ * server asks a model: `vocal && lyrics === null` is what does, in both
+ * "write" and "prompt". All this says is whether `lyrics_prompt` is honoured.
+ *
+ * Must AGREE with `vocal`: "instrumental" means vocal=false and nothing else
+ * does. The API 422s every other pairing.
+ */
+export type LyricsMode = "write" | "prompt" | "instrumental";
+
+/**
+ * The requested lead vocal. A caption hint the worker folds into ACE-Step's
+ * conditioning — there is no gender parameter, so it is never a guarantee.
+ */
+export type Voice = "auto" | "female" | "male";
 
 export interface GenerateRequest {
   prompt: string;
+  /** Null to let the server name it. Blank strings are normalised to null. */
+  title?: string | null;
   genre?: Genre | null;
   mood?: Mood | null;
   bpm_min?: number | null;
@@ -59,8 +81,18 @@ export interface GenerateRequest {
    * The user's own words, or null to let the model write them. Must be null
    * when `vocal` is false — the API returns a 422 for that pair, because
    * ACE-Step expresses "instrumental" through this same field.
+   *
+   * Belongs to lyrics_mode "write". Sending it in "prompt" mode is a 422.
    */
   lyrics?: string | null;
+  lyrics_mode: LyricsMode;
+  /**
+   * What the song should be ABOUT, in prose. Belongs to lyrics_mode "prompt";
+   * sending it in "write" mode is a 422. Exactly one of this and `lyrics` is
+   * ever non-null, and `lyrics_mode` says which.
+   */
+  lyrics_prompt?: string | null;
+  voice: Voice;
 }
 
 export type RefinementMode = "fresh" | "audio_reference";
@@ -96,6 +128,12 @@ export interface JobStatus {
 export interface TrackSummary {
   id: string;
   prompt: string;
+  /**
+   * The track's name. NULL on every track created before the column existed —
+   * which is most of them — so `trackTitle()` keeps its prompt derivation as
+   * the floor under this rather than as legacy.
+   */
+  title: string | null;
   genre: Genre | null;
   mood: Mood | null;
   bpm: number | null;

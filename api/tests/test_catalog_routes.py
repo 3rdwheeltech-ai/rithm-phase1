@@ -39,6 +39,7 @@ def _track(index: int = 0, **overrides: Any) -> TrackRow:
         "id": UUID(int=index + 1),
         "user_id": USER_ID,
         "source_job_id": uuid4(),
+        "title": f"Track {index}",
         "genre": "Lo-Fi",
         "mood": "Calm",
         "bpm": 85,
@@ -282,6 +283,28 @@ async def test_detail_carries_lyrics_but_the_list_does_not(
 
     summary = (await client.get("/api/v1/tracks")).json()[0]
     assert "lyrics" not in summary
+
+
+@pytest.mark.asyncio
+async def test_the_title_is_on_every_list_row_and_survives_being_null(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    On the SUMMARY, not detail-only — every list row renders the name, which is
+    the whole reason it is a column rather than a key inside `params`.
+
+    Null is a real state: every track written before the column existed has
+    one, and the client falls back to deriving a name from the prompt.
+    """
+
+    async def _list(**_kwargs: Any) -> tuple[list[TrackRow], bool, int]:
+        return [_track(0, title="Vinyl Rain"), _track(1, title=None)], False, 2
+
+    monkeypatch.setattr(catalog_service, "list_tracks", _list)
+
+    rows = (await client.get("/api/v1/tracks")).json()
+
+    assert [row["title"] for row in rows] == ["Vinyl Rain", None]
 
 
 @pytest.mark.asyncio

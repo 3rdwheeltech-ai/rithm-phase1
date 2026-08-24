@@ -14,7 +14,6 @@ _SENSITIVE_KEYS = frozenset(
         "access_key",
         "secret_key",
         "cognito_sub",
-        "openai_api_key",
     }
 )
 

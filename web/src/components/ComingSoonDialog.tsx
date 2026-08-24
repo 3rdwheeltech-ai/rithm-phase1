@@ -13,7 +13,7 @@ import { Sparkles, X } from "lucide-react";
  * wrapping a genuinely disabled form control. This is a modal for a control that
  * responds. Keep them apart.
  *
- * Portalled for the same reason `<JobProgress>` is: `fixed inset-0` is only
+ * Portalled for the same reason `<GenerationPill>` is: `fixed` is only
  * viewport-relative when no ancestor establishes a containing block, and these
  * pages are full of `backdrop-filter` and retained transforms.
  */

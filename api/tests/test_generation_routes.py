@@ -21,9 +21,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.modules.generation import authoring
 from app.modules.generation import service as generation_service_module
 from app.modules.generation.interfaces import ParentTrack
-from app.modules.generation.schemas import LYRICS_MAX_LENGTH
+from app.modules.generation.schemas import LYRICS_MAX_LENGTH, GenerationParams
 from app.modules.generation.service import generation_service
 from app.shared.auth import require_user
 from tests.conftest import FakeSession
@@ -34,6 +35,8 @@ PARENT_TRACK_ID = UUID("00000000-0000-7000-8000-0000000000a1")
 
 PARENT_PARAMS: dict[str, Any] = {
     "prompt": "warm lo-fi piano loop",
+    "title": "Vinyl Rain",
+    "voice": "female",
     "genre": "Lo-Fi",
     "mood": "Calm",
     "bpm": 85,
@@ -53,7 +56,15 @@ GENERATE_BODY: dict[str, Any] = {
     "bpm_max": 90,
     "instruments": ["piano"],
     "vocal": False,
+    "lyrics_mode": "instrumental",
     "length_seconds": 30,
+}
+
+# The same request as a SUNG one. Every lyric assertion below starts here.
+SUNG_BODY: dict[str, Any] = {
+    **GENERATE_BODY,
+    "vocal": True,
+    "lyrics_mode": "write",
 }
 
 
@@ -250,14 +261,28 @@ async def test_inverted_bpm_range_is_rejected(
 async def test_lyrics_reach_the_envelope_verbatim(
     client: AsyncClient, sqs: list[dict[str, Any]]
 ) -> None:
-    """The worker passes this straight to ACE-Step, so nothing may reshape it."""
-    written = "[verse]\nNeon on the wet street\n\n[chorus]\nDrive\n"
-    body = {**GENERATE_BODY, "vocal": True, "lyrics": written}
+    """
+    The worker passes this straight to ACE-Step, so nothing may reshape it.
+
+    Surrounding whitespace is the one exception — it is trimmed, because a box
+    the user tabbed through is not a request to sing three spaces. Everything
+    between the first and last character, structure tags and blank lines
+    included, goes over byte for byte.
+    """
+    written = "[verse]\nNeon on the wet street\n\n[chorus]\nDrive"
+    body = {**SUNG_BODY, "lyrics": written}
 
     response = await client.post("/api/v1/tracks/generate", json=body)
 
     assert response.status_code == 202
     assert _envelope(sqs)["params"]["lyrics"] == written
+
+    padded = await client.post(
+        "/api/v1/tracks/generate", json={**SUNG_BODY, "lyrics": f"\n  {written}  \n"}
+    )
+
+    assert padded.status_code == 202
+    assert json.loads(sqs[1]["body"])["params"]["lyrics"] == written
 
 
 @pytest.mark.asyncio
@@ -281,7 +306,7 @@ async def test_blank_lyrics_normalise_to_none(
     A box the user tabbed through means "write your own words", not "sing
     these three spaces" — and whitespace would otherwise reach the model.
     """
-    body = {**GENERATE_BODY, "vocal": True, "lyrics": "   \n\t "}
+    body = {**SUNG_BODY, "lyrics": "   \n\t "}
 
     response = await client.post("/api/v1/tracks/generate", json=body)
 
@@ -298,7 +323,7 @@ async def test_lyrics_with_an_instrumental_are_rejected(
     Both occupy ACE-Step's single `lyrics` field, so one would have to silently
     win. A 422 at the edge means nobody downstream has to invent a precedence.
     """
-    body = {**GENERATE_BODY, "vocal": False, "lyrics": "sing this"}
+    body = {**GENERATE_BODY, "lyrics": "sing this"}
 
     response = await client.post("/api/v1/tracks/generate", json=body)
 
@@ -311,7 +336,7 @@ async def test_lyrics_with_an_instrumental_are_rejected(
 async def test_overlong_lyrics_are_rejected(
     client: AsyncClient, sqs: list[dict[str, Any]]
 ) -> None:
-    body = {**GENERATE_BODY, "vocal": True, "lyrics": "la " * LYRICS_MAX_LENGTH}
+    body = {**SUNG_BODY, "lyrics": "la " * LYRICS_MAX_LENGTH}
 
     response = await client.post("/api/v1/tracks/generate", json=body)
 
@@ -398,6 +423,216 @@ async def test_enqueue_failure_fails_the_job_and_returns_503(
     assert response.headers["Retry-After"] == "30"
 
 
+# ── title, lyrics authoring and the singer ─────────────────────────────────
+
+_MODEL_LYRICS = "[verse]\nHeadlights on the wet road\n\n[chorus]\nDrive it off\n"
+
+
+@pytest.fixture
+def bedrock(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """
+    A fake `converse` in authoring's namespace.
+
+    Patched there rather than in shared/aws so the sanitisers, the timeout
+    wrapper and the prompt assembly all stay in the path — those are the parts
+    that can be wrong. A moto round-trip would test botocore instead.
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def _converse(
+        *, model_id: str, system: str, user: str, max_tokens: int, temperature: float
+    ) -> str | None:
+        calls.append({"model_id": model_id, "system": system, "user": user})
+        # The title model gets far fewer tokens than the lyricist; that is the
+        # only thing distinguishing the two calls from in here.
+        return "Wet Road Nights" if max_tokens <= 20 else _MODEL_LYRICS
+
+    monkeypatch.setattr(authoring, "converse", _converse)
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_a_supplied_title_reaches_the_envelope_verbatim(
+    client: AsyncClient, sqs: list[dict[str, Any]], bedrock: list[dict[str, Any]]
+) -> None:
+    """A name the user typed is never second-guessed, and costs no model call."""
+    body = {**GENERATE_BODY, "title": "  Midnight Ferry  "}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    # Stripped, because a box the user tabbed through is not a name.
+    assert _envelope(sqs)["params"]["title"] == "Midnight Ferry"
+    assert bedrock == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_a_blank_title_is_written_by_the_model(
+    client: AsyncClient, sqs: list[dict[str, Any]], bedrock: list[dict[str, Any]]
+) -> None:
+    body = {**GENERATE_BODY, "title": "   "}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["title"] == "Wet Road Nights"
+    assert len(bedrock) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_a_lyric_brief_produces_model_lyrics(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    body = {
+        **SUNG_BODY,
+        "lyrics_mode": "prompt",
+        "lyrics_prompt": "a late drive home after a fight nobody won",
+    }
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    params = _envelope(sqs)["params"]
+    assert params["lyrics"] == _MODEL_LYRICS.strip()
+    assert params["lyrics_source"] == "model"
+    # The brief is provenance and is kept beside the words it produced; the
+    # worker reads neither.
+    assert params["lyrics_prompt"] == "a late drive home after a fight nobody won"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_an_empty_write_box_also_gets_model_lyrics(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    The rule is `vocal and lyrics is None`, in BOTH modes.
+
+    Write mode's empty state has promised since Day 4 that "RITHM will write
+    the words for you" with nothing behind it. This is that promise kept.
+    """
+    response = await client.post("/api/v1/tracks/generate", json=SUNG_BODY)
+
+    assert response.status_code == 202
+    params = _envelope(sqs)["params"]
+    assert params["lyrics"] == _MODEL_LYRICS.strip()
+    assert params["lyrics_source"] == "model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_user_lyrics_are_never_overwritten(
+    client: AsyncClient, sqs: list[dict[str, Any]], bedrock: list[dict[str, Any]]
+) -> None:
+    written = "[verse]\nMy own words"
+    body = {**SUNG_BODY, "lyrics": written}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    params = _envelope(sqs)["params"]
+    assert params["lyrics"] == written
+    assert params["lyrics_source"] == "user"
+    # One call — the title — and no lyricist call at all.
+    assert len(bedrock) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+async def test_bedrock_falling_over_still_returns_202(
+    client: AsyncClient, sqs: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    THE test the whole design rests on.
+
+    Generation is the product; the authoring model is a garnish. An outage must
+    degrade to exactly the pre-Bedrock behaviour — a complete, enqueued job
+    whose lyrics field ACE-Step's own planner fills — never a 500.
+    """
+
+    async def _explode(**_kwargs: Any) -> str | None:
+        raise RuntimeError("bedrock is having a day")
+
+    monkeypatch.setattr(authoring, "converse", _explode)
+
+    response = await client.post(
+        "/api/v1/tracks/generate",
+        json={**SUNG_BODY, "lyrics_mode": "prompt", "lyrics_prompt": "a long drive"},
+    )
+
+    assert response.status_code == 202
+    params = _envelope(sqs)["params"]
+    assert params["lyrics"] is None
+    assert params["lyrics_source"] == "acestep"
+    # ...and the track still has a name, derived from the prompt alone.
+    assert params["title"] == "Warm lo-fi piano loop with soft vinyl crackle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions")
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        ({"vocal": False, "lyrics_mode": "write"}, "vocal=false is instrumental"),
+        ({"vocal": True, "lyrics_mode": "instrumental"}, "instrumental has no singer"),
+        (
+            {"vocal": True, "lyrics_mode": "write", "lyrics_prompt": "a brief"},
+            "a brief belongs to prompt mode",
+        ),
+        (
+            {"vocal": True, "lyrics_mode": "prompt", "lyrics": "[verse]\nwords"},
+            "words belong to write mode",
+        ),
+    ],
+)
+async def test_disagreeing_lyric_fields_are_rejected(
+    client: AsyncClient,
+    sqs: list[dict[str, Any]],
+    overrides: dict[str, Any],
+    why: str,
+) -> None:
+    """Three text fields and two flags disagree in more ways than they agree."""
+    body = {**GENERATE_BODY, **overrides}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 422, why
+    assert sqs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_a_voice_on_an_instrumental_normalises_instead_of_422ing(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    """
+    A gender for a track with no singer is meaningless, not contradictory —
+    and 422-ing a leftover slider position is user-hostile.
+    """
+    body = {**GENERATE_BODY, "voice": "male"}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["voice"] == "auto"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sessions", "bedrock")
+async def test_the_voice_reaches_the_envelope(
+    client: AsyncClient, sqs: list[dict[str, Any]]
+) -> None:
+    body = {**SUNG_BODY, "voice": "female"}
+
+    response = await client.post("/api/v1/tracks/generate", json=body)
+
+    assert response.status_code == 202
+    assert _envelope(sqs)["params"]["voice"] == "female"
+
+
 # ── variation ──────────────────────────────────────────────────────────────
 
 
@@ -422,6 +657,10 @@ async def test_variation_copies_parent_params_with_a_new_seed(
     assert params["mood"] == "Calm"
     assert params["bpm"] == 85
     assert params["vocal"] is False
+    # A variation is the SAME song: it inherits the name and the singer through
+    # model_validate, and triggers no authoring call of its own.
+    assert params["title"] == "Vinyl Rain"
+    assert params["voice"] == "female"
     # ...and the seed is the ONLY thing that moved. TTM-04 depends on it.
     assert params["seed"] != PARENT_PARAMS["seed"]
 
@@ -563,3 +802,30 @@ def test_genres_and_moods_match_the_catalog_vocabulary() -> None:
 
     assert tuple(g.value for g in Genre) == GENRES
     assert tuple(m.value for m in Mood) == MOODS
+
+
+def test_the_new_params_survive_model_validate_on_the_inherited_paths() -> None:
+    """
+    Variation and refine build their params with
+    GenerationParams.model_validate({**parent["params"], ...}) and are
+    otherwise untouched by this feature — which only works if the new fields
+    round-trip through that call. A field that silently dropped here would
+    rename every variation and lose its singer.
+    """
+    params = GenerationParams.model_validate(
+        {**PARENT_PARAMS, "prompt": PARENT_PARAMS["prompt"], "seed": 999}
+    )
+
+    assert params.title == "Vinyl Rain"
+    assert params.voice == "female"
+
+
+def test_a_parent_from_before_this_feature_still_validates() -> None:
+    """Every track already in the database predates all four new fields."""
+    legacy = {k: v for k, v in PARENT_PARAMS.items() if k not in ("title", "voice")}
+
+    params = GenerationParams.model_validate({**legacy, "seed": 999})
+
+    assert params.title is None
+    assert params.voice == "auto"
+    assert params.lyrics_source is None

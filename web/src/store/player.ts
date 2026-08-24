@@ -22,6 +22,12 @@ export interface PlayerState {
   /** Advance/retreat within the queue. No-ops at the ends — see hasNext. */
   next: () => void;
   previous: () => void;
+  /**
+   * Back to the empty state. Called on sign-out: the queue's `mp3_url`s are
+   * presigned to the session that fetched them, so they must not survive into
+   * the next one.
+   */
+  reset: () => void;
 }
 
 /** Index of the loaded track within its queue, or -1. */
@@ -89,4 +95,6 @@ export const usePlayer = create<PlayerState>()((set) => ({
       const earlier = i > 0 ? s.queue[i - 1] : undefined;
       return earlier ? { track: earlier, position: 0 } : {};
     }),
+
+  reset: () => set({ track: null, queue: [], isPlaying: false, position: 0 }),
 }));

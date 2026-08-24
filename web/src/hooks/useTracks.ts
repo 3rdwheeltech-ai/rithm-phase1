@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { requestWithHeaders } from "../lib/api";
 import { qk } from "../lib/queryClient";
+import { useAuth } from "../store/auth";
 import type { TrackSummary } from "../types/api";
 
 export const PAGE_SIZE = 20;
@@ -35,10 +36,16 @@ export async function fetchTracksPage(cursor?: string): Promise<TracksPage> {
  * is why this goes through requestWithHeaders rather than request.
  */
 export function useTracks() {
+  const status = useAuth((s) => s.status);
+
   return useInfiniteQuery({
     queryKey: qk.tracksList(),
     queryFn: ({ pageParam }) => fetchTracksPage(pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    // Mirrors useMe: no token yet during bootstrap is a guaranteed 401, and
+    // gating this is also what keeps the sign-out frame from refetching into
+    // an anonymous request right as the cache clears.
+    enabled: status === "authed",
   });
 }

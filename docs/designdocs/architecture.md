@@ -672,7 +672,7 @@ CloudWatch Logs Insights query on `job_id` follows a job across all four hops**:
 worker claim → worker complete → API finalize.
 
 Both include a `_scrub_sensitive` processor redacting `password`, `id_token`, `refresh_token`,
-`api_key`, `authorization`, `access_key`, `secret_key`, `cognito_sub`, `openai_api_key`, and the
+`api_key`, `authorization`, `access_key`, `secret_key`, `cognito_sub`, and the
 worker DSN. Both omit `add_logger_name`, which is incompatible with `PrintLogger`.
 
 **Correlation**: `RequestIdMiddleware` binds `request_id` (from `X-Request-Id` or a fresh uuid4)
@@ -761,7 +761,7 @@ WAF, MFA off, and a plaintext-credential file on the developer's disk.
 | `assignPublicIp=ENABLED` on every task | No NAT gateway exists |
 | Presigned S3 GET instead of CloudFront signed URLs | Config exists in `api/app/config.py`, unused |
 | `conversation` and `personalization` schemas migrated but code-empty | Cut for launch; migrations landed to avoid a later coordinated deploy |
-| Bedrock / OpenAI configured but never called | `compose_refined_prompt` uses string composition as the documented seam an LLM will take over |
+| Bedrock configured but called only for authoring | `POST /tracks/generate` writes lyrics and titles through it; `compose_refined_prompt` is still string composition, and stays the documented seam an LLM will take over |
 | Single-pass `loudnorm` | Two-pass deferred; the function signature will not change |
 | No per-job SQS heartbeat | Large visibility timeout + claim guard cover the same failure modes |
 | Rate-limit race under READ COMMITTED | Accepted; `pg_advisory_xact_lock` is the identified fix |
@@ -809,7 +809,7 @@ Behavioural — `ENVIRONMENT` (gates `/docs`, `/openapi.json`, and the SSE-secre
 `ESTIMATED_COLD_START_SECONDS`, `CURRENT_CONSENT_VERSION`, `DB_REQUIRE_SSL`,
 `CORS_ALLOWED_ORIGINS`, `RITHM_DEV_ENDPOINTS`, `LOG_LEVEL`.
 
-Secrets — `SSE_TOKEN_SECRET`, `COGNITO_APP_CLIENT_SECRET`, `OPENAI_API_KEY` (unused).
+Secrets — `SSE_TOKEN_SECRET`, `COGNITO_APP_CLIENT_SECRET`.
 
 > The live task definition sets `RATE_LIMIT_PER_24H=1000000`, effectively disabling the rate
 > limit. The template default is 20.

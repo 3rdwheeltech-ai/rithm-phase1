@@ -84,6 +84,10 @@ def test_generate_passes_the_exact_kwarg_set() -> None:
             # Absent from params means "no lyrics", not "key missing" — the
             # adapter has to receive the None rather than infer it.
             "lyrics": None,
+            # Every job already queued, and every parent track's params,
+            # predates this field — so the dispatch defaults it rather than
+            # indexing for it.
+            "voice": "auto",
         }
     ]
     # bpm_min/bpm_max are carried in the envelope for fidelity but must never
@@ -220,3 +224,57 @@ def test_caption_carries_neither_bpm_nor_vocal() -> None:
     assert "bpm" not in caption
     assert "vocal" not in caption
     assert "instrumental" not in caption
+
+
+def test_compose_caption_places_the_voice_between_mood_and_instruments() -> None:
+    """
+    ACE-Step has no gender field, so the caption is the only channel — and
+    WHERE it sits is the same kind of product decision the order above is.
+    """
+    assert (
+        inference._compose_caption(
+            "warm lo-fi piano loop", "Lo-Fi", "Calm", ["piano", "rhodes"], "female"
+        )
+        == "warm lo-fi piano loop, Lo-Fi, Calm, female vocals, piano, rhodes"
+    )
+    assert (
+        inference._compose_caption(
+            "warm lo-fi piano loop", "Lo-Fi", "Calm", ["piano", "rhodes"], "male"
+        )
+        == "warm lo-fi piano loop, Lo-Fi, Calm, male vocals, piano, rhodes"
+    )
+
+
+def test_auto_voice_leaves_the_pinned_caption_byte_identical() -> None:
+    """
+    The default has to be inert, not merely harmless.
+
+    Every track generated before this parameter existed carries no `voice`, so
+    "auto" must produce the exact string the pin above asserts — otherwise a
+    re-run of an old job conditions differently for no reason anyone can see.
+    """
+    pinned = inference._compose_caption(
+        "warm lo-fi piano loop", "Lo-Fi", "Calm", ["piano", "rhodes"]
+    )
+    assert (
+        inference._compose_caption(
+            "warm lo-fi piano loop", "Lo-Fi", "Calm", ["piano", "rhodes"], "auto"
+        )
+        == pinned
+    )
+    # An unrecognised value is inert too, rather than reaching the caption raw.
+    assert (
+        inference._compose_caption(
+            "warm lo-fi piano loop", "Lo-Fi", "Calm", ["piano", "rhodes"], "alto"
+        )
+        == pinned
+    )
+
+
+@pytest.mark.usefixtures("real_path")
+def test_voice_reaches_the_model_from_params() -> None:
+    model = RecordingModel()
+
+    inference.run_inference(model, _job(voice="male"))
+
+    assert model.calls[0]["voice"] == "male"

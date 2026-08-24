@@ -65,6 +65,7 @@ def _summary(track: TrackRow) -> TrackSummary:
     return TrackSummary(
         id=track.id,
         prompt=track.prompt,
+        title=track.title,
         genre=track.genre,
         mood=track.mood,
         bpm=track.bpm,
