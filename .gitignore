@@ -41,3 +41,8 @@ docs/others/terminal-progress-misc.md
 docs/InitialSetup/RITHM_Phase1_DesignDoc-2.md
 .env.rds
 .env.rds.admin
+
+# Playwright (web/e2e)
+web/test-results/
+web/playwright-report/
+web/.playwright/

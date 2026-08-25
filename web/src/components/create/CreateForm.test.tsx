@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import CreateForm from "./CreateForm";
 import { renderWithProviders, jsonResponse } from "../../test-utils";
-import { MAX_INSTRUMENTS } from "../../types/api";
+import { MAX_INSTRUMENTS, type SongDraft } from "../../types/api";
 import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -389,5 +391,149 @@ describe("CreateForm", () => {
       expect(note).toHaveAttribute("aria-label", expect.stringContaining("Coming soon"));
       expect(note).not.toBeDisabled();
     }
+  });
+});
+
+/**
+ * The chat assistant's handoff.
+ *
+ * `lib/chat.ts` is the single place the wire invariants are honoured; these
+ * are the statement that they arrive intact — and, at the end, that a handed
+ * draft submits without a 422. A 422 here is what the user would read as "the
+ * chatbot broke Create".
+ */
+function LocationProbe() {
+  const { state } = useLocation();
+  return <span data-testid="router-state">{state === null ? "cleared" : "present"}</span>;
+}
+
+function renderHandedOver(state: unknown) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[{ pathname: "/create", state }]}>
+        <LocationProbe />
+        <CreateForm />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const FULL_DRAFT: SongDraft = {
+  prompt: "a rainy late-night drive",
+  title: "Neon Rooftop",
+  genre: "Lo-Fi",
+  mood: "Calm",
+  instruments: ["piano", "rhodes"],
+  length_seconds: 120,
+  bpm_min: 80,
+  bpm_max: 100,
+  lyrics_mode: "prompt",
+  voice: "female",
+  lyrics: null,
+  lyrics_prompt: "a fight nobody won",
+};
+
+describe("CreateForm — the chat handoff", () => {
+  it("fills every field and opens on Advanced", async () => {
+    renderHandedOver({ draft: FULL_DRAFT });
+
+    // Advanced, because the draft carries genre, mood, tempo and voice — none
+    // of which Simple can show. Landing on Simple would look like the form had
+    // ignored half the conversation.
+    expect(screen.getByRole("tab", { name: "Advanced" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    expect(screen.getByLabelText("Describe the track")).toHaveValue("a rainy late-night drive");
+    expect(screen.getByLabelText("Track title")).toHaveValue("Neon Rooftop");
+    expect(screen.getByLabelText("Genre")).toHaveValue("Lo-Fi");
+    expect(screen.getByLabelText("Mood")).toHaveValue("Calm");
+    expect(screen.getByLabelText("What the song is about")).toHaveValue("a fight nobody won");
+    expect(screen.getByText("piano")).toBeInTheDocument();
+    expect(screen.getByText("rhodes")).toBeInTheDocument();
+    // A bpm range means Auto is OFF — the pair is both-or-neither on the wire,
+    // so its presence IS the tempo decision.
+    expect(screen.getByLabelText("Min BPM")).toHaveValue("80");
+    expect(screen.getByLabelText("Max BPM")).toHaveValue("100");
+  });
+
+  it("submits a handed draft without a 422", async () => {
+    const user = userEvent.setup();
+    renderHandedOver({ draft: FULL_DRAFT });
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = generateBody();
+    expect(body.prompt).toBe("a rainy late-night drive");
+    expect(body.genre).toBe("Lo-Fi");
+    expect(body.mood).toBe("Calm");
+    expect(body.bpm_min).toBe(80);
+    expect(body.bpm_max).toBe(100);
+    expect(body.length_seconds).toBe(120);
+    expect(body.lyrics_mode).toBe("prompt");
+    expect(body.lyrics_prompt).toBe("a fight nobody won");
+    // Exactly one of the two lyric fields is ever non-null, and lyrics_mode
+    // says which. Every other pairing is a 422.
+    expect(body.lyrics).toBeNull();
+    expect(body.vocal).toBe(true);
+    expect(body.voice).toBe("female");
+  });
+
+  it("keeps an instrumental draft's vocals off and its voice neutral", async () => {
+    const user = userEvent.setup();
+    renderHandedOver({
+      draft: { ...FULL_DRAFT, lyrics_mode: "instrumental", lyrics_prompt: null, voice: "auto" },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = generateBody();
+    expect(body.vocal).toBe(false);
+    expect(body.lyrics_mode).toBe("instrumental");
+    expect(body.voice).toBe("auto");
+    expect(body.lyrics).toBeNull();
+    expect(body.lyrics_prompt).toBeNull();
+  });
+
+  it("clears the router state once it has been consumed", async () => {
+    renderHandedOver({ draft: FULL_DRAFT });
+
+    // history.state survives a reload. Without this, a refresh silently
+    // re-seeds the form from a conversation the user has moved past — and
+    // throws away whatever they changed in the meantime.
+    await waitFor(() =>
+      expect(screen.getByTestId("router-state")).toHaveTextContent("cleared"),
+    );
+    // …and the values it seeded are still there.
+    expect(screen.getByLabelText("Describe the track")).toHaveValue("a rainy late-night drive");
+  });
+
+  it("still honours the prompt-only handoff from Home", () => {
+    renderHandedOver({ prompt: "warm lo-fi piano" });
+
+    expect(screen.getByLabelText("Describe the track")).toHaveValue("warm lo-fi piano");
+    // Nothing Simple cannot show, so it opens where it always did.
+    expect(screen.getByRole("tab", { name: "Simple" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens on Simple for a draft that carries nothing Advanced-only", () => {
+    renderHandedOver({
+      draft: {
+        ...FULL_DRAFT,
+        genre: null,
+        mood: null,
+        bpm_min: null,
+        bpm_max: null,
+        voice: "auto",
+      },
+    });
+
+    expect(screen.getByRole("tab", { name: "Simple" })).toHaveAttribute("aria-selected", "true");
   });
 });

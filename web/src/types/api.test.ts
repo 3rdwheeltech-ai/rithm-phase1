@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASSISTANT_UNAVAILABLE_TYPE,
+  CHAT_MESSAGE_MAX_LENGTH,
+  CHAT_SESSION_FULL_TYPE,
   GENRES,
   LYRICS_MAX_LENGTH,
   LYRICS_PROMPT_MAX_LENGTH,
@@ -52,5 +55,22 @@ describe("generation vocabulary", () => {
     expect(LYRICS_MAX_LENGTH).toBe(3000);
     expect(TITLE_MAX_LENGTH).toBe(80);
     expect(LYRICS_PROMPT_MAX_LENGTH).toBe(600);
+  });
+});
+
+/**
+ * The chat panel matches on these two `type` URIs to decide between a retry
+ * row and a "Start over" row. A rename on the server side is a silent
+ * regression: the match just stops firing and the user gets a full-page error
+ * toast over a chat that still works.
+ */
+describe("chat wire constants", () => {
+  it("mirrors the server's message bound", () => {
+    expect(CHAT_MESSAGE_MAX_LENGTH).toBe(1000);
+  });
+
+  it("pins the two problem types the panel handles inline", () => {
+    expect(ASSISTANT_UNAVAILABLE_TYPE).toBe("https://rithm.dev/errors/assistant-unavailable");
+    expect(CHAT_SESSION_FULL_TYPE).toBe("https://rithm.dev/errors/chat-session-full");
   });
 });

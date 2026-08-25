@@ -18,7 +18,8 @@ threadpool hop irrelevant.
 # the public functions below have fully concrete signatures, so nothing leaks.
 # pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
-from typing import Any
+from enum import StrEnum
+from typing import Any, Literal, TypedDict
 
 import boto3
 import structlog
@@ -32,7 +33,12 @@ logger = structlog.get_logger()
 
 _sqs_client: Any = None
 _s3_client: Any = None
-_bedrock_runtime_client: Any = None
+# Keyed by read timeout, NOT a single global: the chat path needs a slower
+# client than the authoring path (a conversation turn is a longer generation
+# than a title), and botocore settles the timeout at construction time. A dict
+# is what lets both live in one process without one silently reconfiguring the
+# other.
+_bedrock_runtime_clients: dict[int, Any] = {}
 
 
 def _client(service: str) -> Any:
@@ -65,7 +71,7 @@ def _s3() -> Any:
     return _s3_client
 
 
-def _bedrock_client() -> Any:
+def _bedrock_client(read_timeout: int = 10) -> Any:
     """
     Lazily build the bedrock-runtime client. Deliberately does NOT honour any
     configured endpoint override.
@@ -95,29 +101,45 @@ def _bedrock_client() -> Any:
     202 the user is watching a spinner for — and the title call's whole budget
     is 4s, so its retry could never land inside the window anyway. One attempt
     is what the latency budget can afford, so it is what is asked for.
+
+    `read_timeout` DEFAULTS TO 10 and the default is the contract: every caller
+    that predates the chat feature calls this with no arguments and expects the
+    authoring client. The chat path passes a longer one because a conversation
+    turn is a bigger generation than a title, and it must sit comfortably OUTSIDE
+    the asyncio budget that governs the turn — botocore cutting in first would
+    turn a clean timeout into a ClientError the chain would then misread as a
+    structural refusal and advance on.
     """
-    global _bedrock_runtime_client
-    if _bedrock_runtime_client is None:
+    client = _bedrock_runtime_clients.get(read_timeout)
+    if client is None:
         settings = get_settings()
-        _bedrock_runtime_client = boto3.client(
+        client = boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,
             config=Config(
                 connect_timeout=2,
-                read_timeout=10,
+                read_timeout=read_timeout,
                 retries={"total_max_attempts": 1, "mode": "standard"},
                 ignore_configured_endpoint_urls=True,
             ),
         )
-    return _bedrock_runtime_client
+        _bedrock_runtime_clients[read_timeout] = client
+    return client
 
 
 def reset_clients() -> None:
-    """Drop cached clients. Test helper — not used at runtime."""
-    global _sqs_client, _s3_client, _bedrock_runtime_client
+    """
+    Drop cached clients. Test helper — not used at runtime.
+
+    The bedrock cache is CLEARED, not nulled: it is a dict now, and rebinding
+    the name would leave the tests' `fresh_clients` autouse fixture silently
+    doing nothing — every later test would then assert against a client built
+    under an earlier test's environment.
+    """
+    global _sqs_client, _s3_client
     _sqs_client = None
     _s3_client = None
-    _bedrock_runtime_client = None
+    _bedrock_runtime_clients.clear()
 
 
 async def send_sqs_message(
@@ -157,41 +179,95 @@ def presign_get(key: str, expires: int = 900) -> str:
     return str(url)
 
 
-async def converse(
-    *, model_id: str, system: str, user: str, max_tokens: int, temperature: float
-) -> str | None:
+class ConverseMessage(TypedDict):
+    """One turn on the Converse wire. `content` is Bedrock's block list."""
+
+    role: Literal["user", "assistant"]
+    content: list[dict[str, str]]  # [{"text": ...}]
+
+
+class ConverseOutcome(StrEnum):
     """
-    One Bedrock Converse turn, or None.
+    Why a Converse call produced no text — which the caller sometimes has to
+    act on differently.
+
+    A bare `None` conflates "the feature is switched off" with "the model
+    refused". That is fine for the authoring calls, which have one
+    deterministic fallback either way. It is useless for the chat chain, which
+    must choose between running the offline interviewer and trying the next
+    model in the list.
+    """
+
+    OK = "ok"
+    DISABLED = "disabled"  # bedrock_enabled is False — the default, NOT a failure
+    FAILED = "failed"  # ClientError / BotoCoreError / malformed response
+
+
+async def converse_messages(
+    *,
+    model_id: str,
+    system: str,
+    messages: list[ConverseMessage],
+    max_tokens: int,
+    temperature: float,
+    read_timeout: int = 10,
+) -> tuple[ConverseOutcome, str | None]:
+    """
+    A multi-turn Bedrock Converse call, plus WHY it produced nothing.
 
     Converse rather than InvokeModel because it is the one request shape that
     is identical across Anthropic and Amazon models — which is the only reason
     two different providers can share this function.
 
-    Returns None on ANY failure: the feature switched off, throttling, denied
-    model access, a malformed response, a network blip. Every caller has a
-    fallback and a Bedrock outage must never turn a 202 into a 500, so raising
-    would only move the try/except one frame up.
+    Never raises. Every AWS failure, every malformed response and every
+    unexpected shape comes back as FAILED, because a Bedrock outage must never
+    turn a 202 into a 500 and raising would only move the try/except one frame
+    up.
     """
     settings = get_settings()
     if not settings.bedrock_enabled:
         # Not a failure — the default posture. Local, CI and tests take the
         # fallback paths, which is also free coverage of them.
         logger.debug("bedrock_disabled", model_id=model_id)
-        return None
+        return ConverseOutcome.DISABLED, None
 
     try:
         response = await run_in_threadpool(
-            _bedrock_client().converse,
+            _bedrock_client(read_timeout).converse,
             modelId=model_id,
             system=[{"text": system}],
-            messages=[{"role": "user", "content": [{"text": user}]}],
+            messages=messages,
             inferenceConfig={"maxTokens": max_tokens, "temperature": temperature},
         )
-        return str(response["output"]["message"]["content"][0]["text"])
+        return ConverseOutcome.OK, str(
+            response["output"]["message"]["content"][0]["text"]
+        )
     except (ClientError, BotoCoreError, KeyError, IndexError, TypeError) as exc:
         # The exception CLASS, never the message: a Bedrock error body can
         # quote the prompt back, and prompts carry user content.
         logger.warning(
             "bedrock_converse_failed", model_id=model_id, error=type(exc).__name__
         )
-        return None
+        return ConverseOutcome.FAILED, None
+
+
+async def converse(
+    *, model_id: str, system: str, user: str, max_tokens: int, temperature: float
+) -> str | None:
+    """
+    One Bedrock Converse turn, or None.
+
+    The single-turn face of `converse_messages`, kept because the authoring
+    calls have exactly one deterministic fallback and so have nothing to do
+    with the distinction an outcome draws. Returns None on ANY failure: the
+    feature switched off, throttling, denied model access, a malformed
+    response, a network blip.
+    """
+    _outcome, text = await converse_messages(
+        model_id=model_id,
+        system=system,
+        messages=[{"role": "user", "content": [{"text": user}]}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return text

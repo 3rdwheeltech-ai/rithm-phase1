@@ -41,4 +41,6 @@ export const qk = {
   track: (id: string) => ["tracks", "detail", id] as const,
   prompts: (id: string) => ["tracks", "detail", id, "prompts"] as const,
   job: (id: string) => ["jobs", id] as const,
+  /** The one live chat session. No variants — the server allows exactly one. */
+  chat: ["chat"] as const,
 };

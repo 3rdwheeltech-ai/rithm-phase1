@@ -80,6 +80,47 @@ class Settings(BaseSettings):
     bedrock_lyrics_timeout_seconds: float = 8.0
     bedrock_title_timeout_seconds: float = 4.0
 
+    # ── Bedrock (conversation) ──────────────────────────────────────────────
+    # An ORDERED FALLBACK CHAIN, comma-separated — the shape
+    # cors_allowed_origins already uses. Haiku leads because it is the model we
+    # want; today it and gemma both fail in under a second (the per-account
+    # Anthropic "use case details" form has not cleared, and gemma is
+    # deliberately absent from the task role's Bedrock policy), so leading with
+    # them costs ~350ms and buys a chain that needs no code change the day
+    # either is unblocked. Nova 2 Lite therefore serves 100% of chat traffic.
+    #
+    # Do NOT add gemma to the IAM policy to "complete" this: it stops failing
+    # fast and starts burning its full read timeout on every turn — measured
+    # >10s, which is why the lyrics path rejected it. See the chat-assistant
+    # plan §0.A and ops/iam/README-bedrock.md.
+    bedrock_chat_model_ids: str = (
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0,"
+        "google.gemma-3-27b-it,"
+        "us.amazon.nova-2-lite-v1:0"
+    )
+    # A budget for the whole TURN, not per model. asyncio.wait_for cancels the
+    # await, never the boto3 thread underneath run_in_threadpool, and anyio's
+    # default limiter is 40 threads SHARED with send_sqs_message on the generate
+    # path — so three orphaned 10s threads per chat turn is a way to stall
+    # generation. A timeout therefore ENDS the chain; it does not advance it.
+    bedrock_chat_timeout_seconds: float = 20.0
+    # Strictly ABOVE the budget above: botocore cutting in first would surface
+    # as a ClientError, which the chain would misread as a structural refusal
+    # and advance on — stacking a second orphaned thread on the same limiter.
+    bedrock_chat_read_timeout_seconds: int = 22
+    # The extractor. Already the title model, already IAM-granted and enabled,
+    # and its 4s precedent budget is the right order of magnitude for the ~200
+    # tokens of JSON this asks for. Deliberately NOT on the chain above: "can
+    # hold a conversation" and "can emit strict JSON" are different jobs.
+    bedrock_extract_model_id: str = "amazon.nova-micro-v1:0"
+    bedrock_extract_timeout_seconds: float = 6.0
+    # tiktoken, not a message count. messages.token_count exists for exactly
+    # this, and a fixed "last N messages" blows the context window the first
+    # time someone pastes a verse into the chat.
+    chat_history_token_budget: int = 3000
+    chat_max_messages_per_session: int = 60  # then 409 — start a new session
+    chat_max_messages_per_day: int = 200  # then 429 — the spend cap
+
     # Operational knobs
     log_level: str = "INFO"
     # 1800, not 300. A cold start is minutes and a 5-minute token is shorter
@@ -124,6 +165,15 @@ class Settings(BaseSettings):
 
     # Consent
     current_consent_version: str = "tos-2026-05"
+
+    @property
+    def chat_model_ids(self) -> tuple[str, ...]:
+        """`bedrock_chat_model_ids` as an ordered tuple, blanks dropped."""
+        return tuple(
+            part.strip()
+            for part in self.bedrock_chat_model_ids.split(",")
+            if part.strip()
+        )
 
 
 @lru_cache

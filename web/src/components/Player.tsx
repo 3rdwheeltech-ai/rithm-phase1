@@ -258,9 +258,20 @@ function Transport({
 
 export default function Player({
   variant = "rail",
+  compact = false,
   className = "",
 }: {
   variant?: PlayerVariant;
+  /**
+   * Shrink to a one-line bar. Meaningful only with variant="home", where the
+   * chat panel takes the rest of the column.
+   *
+   * It selects a BODY inside the existing desktop return — never an early
+   * return of its own. The `if (onMobile)` branch below is the counter-example
+   * and it carries a second <audio> element for exactly that reason; a third
+   * one here would be a third place playback can be cut.
+   */
+  compact?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -501,6 +512,43 @@ export default function Player({
     </button>
   );
 
+  /*
+    The mini bar's contents, shared by the mobile dock and by compact Home.
+    Two consts rather than a nested component: a component declared in here is
+    a new type on every render, and `timeupdate` fires several times a second
+    during playback — which is what used to destroy and rebuild these controls
+    under the user's pointer. See the note on ProgressTrack above.
+  */
+  const miniIdentity = track ? (
+    <>
+      <CoverArt seed={track.id} className="h-10 w-10 shrink-0 rounded-full" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-ink">
+          {trackTitle(track)}
+        </span>
+        <span className="block truncate font-mono text-2xs tabular-nums text-ink-faint">
+          {formatDuration(current)} / {totalText}
+        </span>
+      </span>
+    </>
+  ) : null;
+
+  const miniPlayButton = (
+    <button
+      type="button"
+      onClick={toggle}
+      title={playing ? "Pause" : "Play"}
+      aria-label={playing ? "Pause" : "Play"}
+      className="glass-btn glass-btn-ring h-11 w-11 shrink-0 rounded-full"
+    >
+      {playing ? (
+        <Pause className="h-[18px] w-[18px]" strokeWidth={2} fill="currentColor" />
+      ) : (
+        <Play className="ml-0.5 h-[18px] w-[18px]" strokeWidth={2} fill="currentColor" />
+      )}
+    </button>
+  );
+
   const emptyState = (
     <div className="flex flex-1 flex-col items-center justify-center px-2 text-center">
       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-ink-faint">
@@ -536,30 +584,10 @@ export default function Player({
               aria-label={`Open player for ${trackTitle(track)}`}
               className="flex min-w-0 flex-1 items-center gap-3 text-left"
             >
-              <CoverArt seed={track.id} className="h-10 w-10 shrink-0 rounded-full" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-ink">
-                  {trackTitle(track)}
-                </span>
-                <span className="block truncate font-mono text-2xs tabular-nums text-ink-faint">
-                  {formatDuration(current)} / {totalText}
-                </span>
-              </span>
+              {miniIdentity}
             </button>
 
-            <button
-              type="button"
-              onClick={toggle}
-              title={playing ? "Pause" : "Play"}
-              aria-label={playing ? "Pause" : "Play"}
-              className="glass-btn glass-btn-ring h-11 w-11 shrink-0 rounded-full"
-            >
-              {playing ? (
-                <Pause className="h-[18px] w-[18px]" strokeWidth={2} fill="currentColor" />
-              ) : (
-                <Play className="ml-0.5 h-[18px] w-[18px]" strokeWidth={2} fill="currentColor" />
-              )}
-            </button>
+            {miniPlayButton}
           </div>
         )}
 
@@ -690,8 +718,16 @@ export default function Player({
   }
 
   // ── Desktop ──────────────────────────────────────────────────────────────
+  // Compact and EMPTY is `hidden`, never unmounted: unmounting takes the
+  // <audio> with it and kills playback, and an empty `.lg-lens` still paints a
+  // lit rim and two drop shadows for nothing.
+  const compactHome = onHome && compact;
   const rootClass = onHome
-    ? cn("lg-lens flex flex-col overflow-hidden", className)
+    ? cn(
+        "lg-lens flex flex-col overflow-hidden",
+        compactHome && !track && "hidden",
+        className,
+      )
     : cn(
         "lg-lens fixed right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col overflow-hidden transition-[width] duration-300 ease-sheet",
         !heightStyle && "h-[460px]",
@@ -717,7 +753,25 @@ export default function Player({
         data-testid="player-audio"
       />
 
-      {expanded ? (
+      {/*
+        `compact` is checked BEFORE `expanded` — `expanded` is
+        `onCreate || onHome || open || hovered`, which is unconditionally true
+        on Home, so an else-branch would never be reached. And no `key` on any
+        of these: a key here remounts the subtree, <audio> included.
+
+        `--r` stays 24px in compact rather than becoming a 999px pill. The
+        aside's lens is useLens("md", 24) and the lens radius must match `--r`
+        or the refracted rim drifts off the CSS corner — useLens reads its
+        radius through a ref and redraws only on resize, so a radius that
+        changes without a size change is a latent bug. A 24px bar under a 24px
+        panel is the more coherent reading anyway.
+      */}
+      {compactHome ? (
+        <div className="flex items-center gap-3 p-2 pr-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">{miniIdentity}</div>
+          {miniPlayButton}
+        </div>
+      ) : expanded ? (
         <div className="flex h-full flex-col p-4">
           {onCreate && track ? (
             <div className="mb-3 flex flex-wrap gap-1.5">

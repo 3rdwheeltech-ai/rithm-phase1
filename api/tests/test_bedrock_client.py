@@ -79,3 +79,40 @@ def test_one_attempt_and_short_timeouts() -> None:
     assert config.retries["total_max_attempts"] == 1
     assert config.connect_timeout == 2
     assert config.read_timeout == 10
+
+
+def test_a_different_read_timeout_is_a_different_cached_client() -> None:
+    """
+    The chat path needs a slower client than the authoring path — a
+    conversation turn is a bigger generation than a title, and botocore settles
+    the timeout at construction time. Keying the cache by that value is what
+    lets both live in one process without one silently reconfiguring the other.
+
+    Everything else about the two must stay identical: one attempt, a 2s
+    connect, and the endpoint override still ignored.
+    """
+    default = aws._bedrock_client()
+    slow = aws._bedrock_client(22)
+
+    assert slow is not default
+    assert aws._bedrock_client(22) is slow  # memoised per value, not rebuilt
+    assert slow.meta.config.read_timeout == 22
+    assert default.meta.config.read_timeout == 10
+    assert slow.meta.config.connect_timeout == 2
+    assert slow.meta.config.retries["total_max_attempts"] == 1
+    assert str(slow.meta.endpoint_url) == str(default.meta.endpoint_url)
+
+
+def test_reset_clients_empties_the_cache_rather_than_nulling_a_global() -> None:
+    """
+    The bedrock cache is a DICT now. Rebinding the name instead of clearing it
+    would leave the `fresh_clients` autouse fixture above silently doing
+    nothing, and every test after the first would assert against a client built
+    under an earlier test's environment.
+    """
+    first = aws._bedrock_client()
+
+    aws.reset_clients()
+
+    assert aws._bedrock_runtime_clients == {}
+    assert aws._bedrock_client() is not first

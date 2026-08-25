@@ -127,6 +127,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ────────────────────────────────────────────────
     from app.modules.catalog import api as catalog_api
+    from app.modules.conversation import api as conversation_api
     from app.modules.generation import api as generation_api
     from app.modules.identity.api import router as identity_router
     from app.shared import health
@@ -140,6 +141,9 @@ def create_app() -> FastAPI:
     # cannot be swallowed by /tracks/{track_id} either.
     app.include_router(generation_api.router, prefix="/api/v1")
     app.include_router(catalog_api.router, prefix="/api/v1")
+    # The chat assistant. Its paths are all under /chat, so it collides with
+    # nothing above and its position here is only convention.
+    app.include_router(conversation_api.router, prefix="/api/v1")
     # Root-mounted: the SNS subscription URL hardcodes this exact path.
     app.include_router(generation_api.internal_router)
 

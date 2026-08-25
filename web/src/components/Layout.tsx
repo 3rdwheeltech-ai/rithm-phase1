@@ -4,6 +4,7 @@ import { cn } from "../lib/cn";
 import { useMe } from "../hooks/useMe";
 import { decodeJwt } from "../lib/jwt";
 import { DESKTOP_QUERY, useMediaQuery } from "../lib/useMediaQuery";
+import { useAssistant } from "../store/assistant";
 import { useAuth } from "../store/auth";
 import { usePlayer } from "../store/player";
 import Sidebar from "./Sidebar";
@@ -14,6 +15,11 @@ import GradualBlur from "./reactbits/GradualBlur";
 // Only the desktop Home route shows the avatar, so its Lottie renderer (~400kB)
 // is code-split out of the initial bundle and never loaded on a phone at all.
 const AvatarPanel = lazy(() => import("./AvatarPanel"));
+// Lazy for the SAME reason, and it is not optional: ChatPanel imports
+// AssistantAvatar, which imports the Lottie renderer. A static import here
+// would walk those 400kB straight back into the entry chunk and undo the split
+// above.
+const ChatPanel = lazy(() => import("./assistant/ChatPanel"));
 
 /**
  * App shell shared by every signed-in page.
@@ -51,6 +57,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const hasTrack = usePlayer((s) => s.track !== null);
+  const chatting = useAssistant((s) => s.mode === "chat");
 
   // The right column varies by route: on Home it's a wide always-open stack
   // (avatar + player), on /create the player is pinned open, elsewhere it
@@ -109,14 +116,44 @@ export default function Layout({ children }: { children: ReactNode }) {
           (variant === "create" || variant === "rail") && "contents",
         )}
       >
-        {variant === "home" && (
-          <Suspense fallback={<div className="lg-lens h-[400px] shrink-0" />}>
-            <AvatarPanel className="shrink-0" />
-          </Suspense>
-        )}
+        {/*
+          Two doors on the same slot. The rail's WIDTH never changes (§0.7) —
+          only how the column divides between assistant and player. Note the
+          two different Suspense fallbacks: a 400px skeleton is wrong for a
+          panel that fills the column.
+
+          NO width or height TRANSITION on this swap. `useLens` redraws its
+          displacement map on ResizeObserver, so an animated box means
+          buildDisplacementMap plus a full-panel SVG data-URI re-decode on
+          every frame. Soften it with opacity or transform on an INNER wrapper
+          if it ever needs softening.
+        */}
+        {variant === "home" &&
+          (chatting ? (
+            <Suspense fallback={<div className="lg-lens min-h-0 flex-1" />}>
+              <ChatPanel className="min-h-0 flex-1" />
+            </Suspense>
+          ) : (
+            <Suspense fallback={<div className="lg-lens h-[400px] shrink-0" />}>
+              <AvatarPanel className="shrink-0" />
+            </Suspense>
+          ))}
+        {/*
+          <Player> keeps its exact position among its siblings at every
+          breakpoint and in both of the states above — it holds the app's only
+          <audio> element, and moving it in the tree remounts it and cuts
+          playback mid-track. `compact` swaps its BODY, never its place.
+        */}
         <Player
           variant={variant}
-          className={variant === "home" ? "w-full min-h-0 flex-1" : ""}
+          compact={variant === "home" && chatting}
+          className={
+            variant === "home"
+              ? chatting
+                ? "w-full shrink-0"
+                : "w-full min-h-0 flex-1"
+              : ""
+          }
         />
       </aside>
 

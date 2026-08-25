@@ -8,6 +8,7 @@ CREATE TABLE conversation.sessions (
     current_state   VARCHAR(20)  NOT NULL DEFAULT 'DESCRIBING',
     active_track_id UUID,                                   -- track currently being discussed/refined
     voice_enabled   BOOLEAN      NOT NULL DEFAULT FALSE,
+    draft           JSONB,                                  -- the SongDraft the chat is building
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
     deleted_at      TIMESTAMPTZ,
@@ -18,6 +19,14 @@ CREATE TABLE conversation.sessions (
 
 CREATE INDEX sessions_user_updated_idx
     ON conversation.sessions (user_id, updated_at DESC)
+    WHERE deleted_at IS NULL;
+
+-- One live session per user, enforced by the database rather than by a comment.
+-- Without this, "resume the newest, create lazily" forks the transcript on two
+-- tabs, a double-click, or StrictMode's double effect. Partial on deleted_at so
+-- "start over" (a soft delete) still allows a fresh row.
+CREATE UNIQUE INDEX sessions_one_active_per_user
+    ON conversation.sessions (user_id)
     WHERE deleted_at IS NULL;
 
 CREATE TRIGGER sessions_touch

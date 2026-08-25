@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import Player from "./Player";
 import { usePlayer } from "../store/player";
 import { renderWithProviders, jsonResponse } from "../test-utils";
@@ -251,5 +253,69 @@ describe("Player", () => {
     });
 
     expect(usePlayer.getState().isPlaying).toBe(false);
+  });
+});
+
+/**
+ * The compact bar the chat panel makes room for on Home.
+ *
+ * What matters here is not how it looks — it is that swapping into and out of
+ * it never touches the <audio> element. It is the only one in the app, and a
+ * remount cuts playback mid-track.
+ */
+describe("Player — compact", () => {
+  it("renders the mini row with the track's name and transport", () => {
+    renderWithProviders(<Player variant="home" compact />);
+
+    expect(screen.getByRole("region", { name: "Track player" })).toBeInTheDocument();
+    expect(screen.getByText("Warm lo-fi piano")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
+    // The full body's controls are gone — that is the point of compact.
+    expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+  });
+
+  it("hides the panel rather than unmounting it when nothing is loaded", () => {
+    usePlayer.setState({ track: null, queue: [], isPlaying: false, position: 0 });
+    renderWithProviders(<Player variant="home" compact />);
+
+    // Present — unmounting takes the <audio> with it — but not painting an
+    // empty lit panel either.
+    expect(audio()).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Track player", hidden: true })).toHaveClass(
+      "hidden",
+    );
+  });
+
+  it("does not remount <audio> when toggling compact", () => {
+    // Re-rendered through the SAME providers: testing-library's `rerender`
+    // replaces the whole tree, so dropping the wrapper here would tear the
+    // component down for an unrelated reason and prove nothing.
+    const { rerender, queryClient } = renderWithProviders(<Player variant="home" />);
+    const wrapped = (compact: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Player variant="home" compact={compact} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const before = audio();
+    before.currentTime = 12;
+
+    rerender(wrapped(true));
+
+    // Node IDENTITY, not just presence: a remount would produce an equivalent
+    // element with a reset currentTime, and the track would restart.
+    expect(audio()).toBe(before);
+    expect(audio().currentTime).toBe(12);
+
+    rerender(wrapped(false));
+    expect(audio()).toBe(before);
+  });
+
+  it("ignores compact away from Home, where there is no chat panel", () => {
+    renderWithProviders(<Player variant="create" compact />);
+
+    // The full body, because /create pins the player open.
+    expect(screen.getByRole("slider")).toBeInTheDocument();
   });
 });

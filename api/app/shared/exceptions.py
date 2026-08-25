@@ -118,3 +118,52 @@ class ConflictException(HTTPException):
 class ForbiddenException(HTTPException):
     def __init__(self, detail: str = "Insufficient permissions.") -> None:
         super().__init__(status_code=403, detail=detail)
+
+
+class AssistantUnavailableException(HTTPException):
+    """
+    No model in the chat chain would answer this turn.
+
+    Its own `type` for the same reason SSETokenExpiredException has one: the
+    SPA renders this as a muted inline row inside a chat that is otherwise
+    usable, with a retry, rather than as an error toast over the whole page.
+    A generic 503 would read as "the app is down".
+
+    The user's message is already committed by the time this is raised. A
+    transcript ending on an unanswered user turn is the honest record, and
+    rolling it back would silently eat what they typed.
+    """
+
+    problem_type = "https://rithm.dev/errors/assistant-unavailable"
+
+    def __init__(self, retry_after_seconds: int = 10) -> None:
+        super().__init__(
+            status_code=503,
+            detail=("The assistant could not answer just now. Try sending that again."),
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+
+
+class ChatSessionFullException(HTTPException):
+    """
+    409, NOT 429.
+
+    Nothing is rate-limited and waiting will not help — this conversation is
+    over its length cap and the fix is to start a new one. Its own type so the
+    SPA surfaces the "Start over" control instead of a Retry-After the user
+    cannot act on.
+
+    The DAILY cap is a real rate limit and reuses RateLimitExceededException.
+    """
+
+    problem_type = "https://rithm.dev/errors/chat-session-full"
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            status_code=409,
+            detail=(
+                f"This conversation has reached {limit} messages. "
+                "Start a new one to keep going."
+            ),
+        )
+        self.problem_extra: dict[str, Any] = {"limit": limit}

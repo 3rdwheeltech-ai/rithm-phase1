@@ -38,6 +38,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/ui": "^1.6.0",
     "autoprefixer": "^10.4.19",
+    "axe-core": "^4.9.0",
     "eslint": "^8.57.0",
     "eslint-plugin-jsx-a11y": "^6.8.0",
     "eslint-plugin-react-hooks": "^4.6.2",

@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import Lottie, { type LottieRefCurrentProps } from "lottie-react";
+import { useEffect, useState } from "react";
+import { useChatSession } from "../hooks/useChat";
 import { useLens } from "../lib/useLens";
+import { usePrefersReducedMotion } from "../lib/useReducedMotion";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
-import avatarAnimation from "../assets/avatar.lottie.json";
+import { useAssistant } from "../store/assistant";
+import AssistantAvatar from "./AssistantAvatar";
+import ComingSoonDialog from "./ComingSoonDialog";
 
 // Prompts the assistant "streams" letter-by-letter, cycling on a loop.
 const PROMPTS = [
@@ -22,8 +25,13 @@ const PHRASES_PER_CYCLE = 2; // phrases shown between cursor-only gaps
  * phrases typed out LLM-style and held — each for 3s — then back to the cursor
  * gap, advancing through the phrase list. Falls back to a static phrase when
  * reduced motion is set.
+ *
+ * Exported because `ChatPanel` reuses the caret treatment for its "thinking"
+ * row: the two are the same idea, and two blinking carets that blink
+ * differently is the kind of detail that reads as sloppiness without anyone
+ * being able to say why.
  */
-function StreamingPrompt({ enabled }: { enabled: boolean }) {
+export function StreamingPrompt({ enabled }: { enabled: boolean }) {
   const [text, setText] = useState("");
 
   useEffect(() => {
@@ -88,8 +96,13 @@ function StreamingPrompt({ enabled }: { enabled: boolean }) {
 /**
  * The AI-assistant avatar atop the Home page's right column. The portrait is a
  * looping Lottie character framed in glass, lit from behind by a breathing brand
- * aura. The "Talk" button is visual only this phase; functionality lands once the
- * assistant is wired up.
+ * aura.
+ *
+ * TWO DOORS, and only one of them is built. "Chat" opens the conversational
+ * panel and gets the breathing `.ai-frame-btn` outline, because the highlighted
+ * door should be the one that works. "Talk" is voice, which is cut — it opens
+ * a ComingSoonDialog, the same treatment AiTools, Discover and ModeToggle give
+ * every unbuilt feature. It used to be a button that did nothing at all.
  *
  * `src` is reserved for swapping in a different portrait image later (it takes
  * precedence over the Lottie when provided).
@@ -101,27 +114,32 @@ export default function AvatarPanel({
   src?: string;
   className?: string;
 }) {
-  const lottieRef = useRef<LottieRefCurrentProps>(null);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  const reduceMotion = usePrefersReducedMotion();
+  const openChat = useAssistant((s) => s.openChat);
+  const [comingSoon, setComingSoon] = useState<string | null>(null);
+
+  /**
+   * Resume a live conversation on a reload.
+   *
+   * `useAssistant` is not persisted, so `mode` survives SPA navigation and not
+   * a refresh — which would otherwise drop the user back to this avatar while
+   * their session sits on the server. The check belongs HERE rather than in
+   * ChatPanel, which is only mounted once the decision has already been made,
+   * and here rather than in Layout, which renders on every route and would
+   * turn a Home-only feature into a request per page.
+   *
+   * ChatPanel reads the same cache entry, so opening costs no second request.
+   */
+  const { data: session } = useChatSession();
+  const hasTranscript = (session?.messages.length ?? 0) > 0;
+  useEffect(() => {
+    if (hasTranscript) openChat();
+  }, [hasTranscript, openChat]);
 
   // Matches the Player it stacks above, so the two read as one column of glass
   // rather than two different materials.
   const lensRef = useLens<HTMLElement>("md", 24);
   const specularRef = useSpecular<HTMLElement>();
-
-  // Honour the user's reduced-motion preference — hold the Lottie on its first
-  // frame instead of looping.
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const apply = () => setReduceMotion(mq.matches);
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, []);
-
-  useEffect(() => {
-    if (reduceMotion) lottieRef.current?.stop();
-  }, [reduceMotion]);
 
   return (
     <section
@@ -133,37 +151,37 @@ export default function AvatarPanel({
         AI Assistant
       </span>
 
-      {/* Avatar stage — Lottie character lit by a breathing brand aura behind it */}
-      <div className="relative w-full overflow-hidden rounded-card border border-white/10 bg-[radial-gradient(ellipse_at_50%_30%,rgb(var(--signal)/0.13),transparent_70%)]">
-        {/* Aura glow behind the character */}
-        <div className="avatar-aura pointer-events-none absolute inset-0 rounded-card" />
-
-        {src ? (
-          <img src={src} alt="AI assistant avatar" className="relative aspect-square w-full object-cover" />
-        ) : (
-          <Lottie
-            lottieRef={lottieRef}
-            animationData={avatarAnimation}
-            loop
-            autoplay={!reduceMotion}
-            className="relative aspect-square w-full"
-            rendererSettings={{ preserveAspectRatio: "xMidYMid meet" }}
-          />
-        )}
-      </div>
+      <AssistantAvatar src={src} />
 
       {/* Streaming assistant prompts, just below the avatar */}
       <StreamingPrompt enabled={!reduceMotion} />
 
-      {/* Talk — breathing AI outline, matches the Generate button */}
-      <div className="ai-frame-btn mt-4 w-full max-w-[200px]">
+      <div className="mt-4 flex w-full max-w-[240px] gap-2">
+        {/* Voice is cut: STT, TTS and an upload route are a feature of their
+            own. Say so out loud rather than shipping a dead control. */}
         <button
           type="button"
-          className="glass-btn glass-btn-solid w-full rounded-el min-h-[44px] px-6 text-base font-semibold"
+          onClick={() => setComingSoon("Voice chat")}
+          className="glass-btn min-h-[44px] flex-1 rounded-el px-4 text-base font-semibold"
         >
           Talk
         </button>
+
+        {/* The rim marks the door that works. */}
+        <div className="ai-frame-btn flex-1">
+          <button
+            type="button"
+            onClick={openChat}
+            className="glass-btn glass-btn-solid min-h-[44px] w-full rounded-el px-4 text-base font-semibold"
+          >
+            Chat
+          </button>
+        </div>
       </div>
+
+      {/* Portalled, so the `backdrop-filter` on this panel cannot become its
+          containing block and trap a `fixed` overlay inside the card. */}
+      <ComingSoonDialog feature={comingSoon} onClose={() => setComingSoon(null)} />
     </section>
   );
 }

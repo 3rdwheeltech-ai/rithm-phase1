@@ -192,3 +192,72 @@ export interface FailedEvent {
   job_id: string;
   error?: string;
 }
+
+// ── Chat assistant ─────────────────────────────────────────────────────────
+
+/**
+ * What the conversation has collected so far. Every field optional — the point
+ * of the chat is that it fills in over several turns.
+ *
+ * Every bound on the server's copy (`api/app/modules/conversation/schemas.py`)
+ * is the matching bound in `GenerateRequest`, and the server clamps on write.
+ * That is what makes `draftToCreateState` a straight mapping rather than a
+ * second round of validation: a draft that arrived here cannot 422 at
+ * `POST /tracks/generate`, and a 422 after a handoff means those bounds have
+ * drifted apart.
+ */
+export interface SongDraft {
+  prompt: string | null;
+  title: string | null;
+  genre: Genre | null;
+  mood: Mood | null;
+  instruments: string[];
+  length_seconds: number | null;
+  bpm_min: number | null;
+  bpm_max: number | null;
+  lyrics_mode: LyricsMode | null;
+  voice: Voice | null;
+  lyrics: string | null;
+  lyrics_prompt: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface ChatTurnResponse {
+  message: ChatMessage;
+  draft: SongDraft;
+  /** Derived server-side from the merged draft, never from a model's own flag. */
+  ready: boolean;
+  /** One-tap answers to whatever was just asked. Chips, not the whole menu. */
+  suggestions: string[];
+}
+
+export interface ChatSessionResponse {
+  /** Null when the user has never sent a message — a bare GET creates nothing. */
+  session_id: string | null;
+  messages: ChatMessage[];
+  draft: SongDraft;
+  ready: boolean;
+}
+
+/** What one chat turn may carry. Mirrors CHAT_MESSAGE_MAX_LENGTH on the server. */
+export const CHAT_MESSAGE_MAX_LENGTH = 1000;
+
+/**
+ * The two problem types the chat panel handles ITSELF, as muted inline rows,
+ * rather than letting them surface as an ErrorToast over a chat that is
+ * otherwise perfectly usable.
+ *
+ * 503: no model would answer this turn. The message is already persisted, so
+ * the fix is a retry.
+ * 409: this conversation is over its length cap. Nothing is rate-limited and
+ * waiting will not help — the fix is "Start over", which is a different
+ * control from a Retry-After the user cannot act on.
+ */
+export const ASSISTANT_UNAVAILABLE_TYPE = "https://rithm.dev/errors/assistant-unavailable";
+export const CHAT_SESSION_FULL_TYPE = "https://rithm.dev/errors/chat-session-full";

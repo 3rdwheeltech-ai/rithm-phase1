@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Lock, X } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useCreateUI } from "../../store/createUI";
 import { useGenerate } from "../../hooks/useGenerate";
 import { useLens } from "../../lib/useLens";
 import { mergeRefs, useSpecular } from "../../lib/useSpecular";
 import { formatDuration } from "../../lib/track";
 import { cn } from "../../lib/cn";
+import { draftToCreateState } from "../../lib/chat";
 import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 import { useShuffledPicks } from "../../lib/useShuffledPicks";
 import ErrorToast from "../ErrorToast";
@@ -32,6 +33,7 @@ import {
   type Genre,
   type LyricsMode,
   type Mood,
+  type SongDraft,
   type Voice,
 } from "../../types/api";
 
@@ -70,32 +72,64 @@ const FIELD_LABEL = "text-xs font-medium text-ink-muted";
 
 export default function CreateForm() {
   const setPlayerHeight = useCreateUI((s) => s.setPlayerHeight);
-  // Home's "Write lyrics" door hands the prompt over in router state rather
-  // than throwing away what the user already typed.
-  const handedOver = (useLocation().state as { prompt?: string } | null)?.prompt;
+  const nav = useNavigate();
+  const { pathname, state } = useLocation();
+  /*
+    Two doors hand work over in router state, and this reads both:
 
-  const [complexity, setComplexity] = useState<Complexity>("simple");
+      { prompt }  Home's "Write lyrics" door, unchanged since Day 4.
+      { draft }   the chat assistant's "Open in Create", thirteen fields at once.
+
+    `draftToCreateState` is the single place the wire invariants are honoured
+    for the second one — see lib/chat.ts for what those are and why.
+  */
+  const handed = state as { prompt?: string; draft?: SongDraft } | null;
+  const seed = draftToCreateState(handed?.draft ?? null, handed?.prompt);
+
+  // Opens on Advanced when the draft carries something Simple cannot show —
+  // genre, mood, tempo or voice. Otherwise the user lands on a form that
+  // appears to have ignored half the conversation.
+  const [complexity, setComplexity] = useState<Complexity>(seed.complexity);
   // Write is the landing state: the lyrics editor is the reason most people
   // open this page, and an empty box still means "you write the words", so
   // defaulting here costs nothing for the users who never touch it.
-  const [lyricMode, setLyricMode] = useState<LyricsMode>("write");
-  const [prompt, setPrompt] = useState(handedOver ?? "");
-  const [title, setTitle] = useState("");
-  const [voice, setVoice] = useState<Voice>("auto");
+  const [lyricMode, setLyricMode] = useState<LyricsMode>(seed.lyricMode);
+  const [prompt, setPrompt] = useState(seed.prompt);
+  const [title, setTitle] = useState(seed.title);
+  const [voice, setVoice] = useState<Voice>(seed.voice);
   // TWO strings, not one shared box. Switching Write→Prompt→Write must not
   // hand a half-written verse to the lyricist as if it were a brief, and must
   // not lose it either.
-  const [lyrics, setLyrics] = useState("");
-  const [lyricPrompt, setLyricPrompt] = useState("");
-  const [genre, setGenre] = useState<Genre | "">("");
-  const [mood, setMood] = useState<Mood | "">("");
-  const [instruments, setInstruments] = useState<string[]>([]);
+  const [lyrics, setLyrics] = useState(seed.lyrics);
+  const [lyricPrompt, setLyricPrompt] = useState(seed.lyricPrompt);
+  const [genre, setGenre] = useState<Genre | "">(seed.genre);
+  const [mood, setMood] = useState<Mood | "">(seed.mood);
+  const [instruments, setInstruments] = useState<string[]>(seed.instruments);
   const [instrumentDraft, setInstrumentDraft] = useState("");
-  const [lengthSeconds, setLengthSeconds] = useState(90);
-  const [tempoAuto, setTempoAuto] = useState(true);
-  const [bpmMin, setBpmMin] = useState(90);
-  const [bpmMax, setBpmMax] = useState(130);
+  const [lengthSeconds, setLengthSeconds] = useState(seed.lengthSeconds);
+  const [tempoAuto, setTempoAuto] = useState(seed.tempoAuto);
+  const [bpmMin, setBpmMin] = useState(seed.bpmMin);
+  const [bpmMax, setBpmMax] = useState(seed.bpmMax);
   const [dismissed, setDismissed] = useState(false);
+
+  /*
+    CONSUME the handoff, then clear it.
+
+    `history.state` survives a reload, so without this a refresh silently
+    re-seeds the form from a conversation the user has since moved past —
+    discarding whatever they changed in the meantime. That has been true of
+    `prompt` since Day 4 and was survivable at one field; across thirteen it
+    stops being invisible.
+
+    The initialisers above have already run by the time this fires, so
+    replacing the entry loses nothing.
+  */
+  useEffect(() => {
+    if (handed) nav(pathname, { replace: true, state: null });
+    // Once, on the entry that carried the handoff. `handed` is a fresh object
+    // identity on every render, so it must NOT be a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // `exclude` keeps anything already on the track out of the suggestions,
   // however it got there — chip tap or typed by hand.
