@@ -39,6 +39,19 @@ def _history(text: str = "something dreamy") -> list[ConverseMessage]:
     return [{"role": "user", "content": [{"text": text}]}]
 
 
+def _answering(asked: str, said: str) -> list[ConverseMessage]:
+    """A two-turn history: the question, and the answer to it.
+
+    The question matters. The tail of the ladder — who sings it, instruments,
+    length — is asked once and then moved past, because "surprise me" leaves
+    the field null and a ladder that waited for a value would ask forever.
+    """
+    return [
+        {"role": "assistant", "content": [{"text": asked}]},
+        {"role": "user", "content": [{"text": said}]},
+    ]
+
+
 class FakeConverse:
     """
     Answers per model id, and records every call.
@@ -369,19 +382,94 @@ async def test_the_offline_interviewer_holds_a_whole_conversation(
     )
 
     draft = SongDraft()
+    history: list[ConverseMessage] = []
     replies: list[str] = []
-    for message in ("a rainy late-night drive", "lo-fi", "calm", "instrumental"):
-        result = await agent.run_turn(history=_history(message), draft=draft)
+    for message in (
+        "a rainy late-night drive",
+        "lo-fi",
+        "calm",
+        "sung",
+        "female",
+        "piano and drums",
+        "90 seconds",
+    ):
+        history.append({"role": "user", "content": [{"text": message}]})
+        result = await agent.run_turn(history=history, draft=draft)
+        history.append({"role": "assistant", "content": [{"text": result.reply}]})
         draft = result.draft
         replies.append(result.reply)
 
     assert draft.prompt == "a rainy late-night drive"
     assert draft.genre == "Lo-Fi"
     assert draft.mood == "Calm"
-    assert draft.lyrics_mode is LyricsMode.INSTRUMENTAL
+    assert draft.lyrics_mode is LyricsMode.WRITE
+    assert draft.voice is Voice.FEMALE
+    assert set(draft.instruments) == {"piano", "drums"}
+    assert draft.length_seconds == 90
     assert result.ready is True
-    # Four different questions, so it is interviewing rather than looping.
-    assert len(set(replies)) == 4
+    # Seven different questions, so it is interviewing rather than looping —
+    # and the last three are the ones that used to be skipped.
+    assert len(set(replies)) == 7
+
+
+@pytest.mark.asyncio
+async def test_the_interview_does_not_stop_at_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Voice, instruments and length are asked AFTER `ready` goes true.
+
+    They all have defaults in the Create form, so none of them gates the
+    DraftCard — but "it never asked" is the complaint, and a draft that opens
+    Create with nothing in those three is a form the user still has to fill in
+    by hand.
+    """
+    monkeypatch.setattr(
+        agent, "converse_messages", FakeConverse({HAIKU: ConverseOutcome.DISABLED})
+    )
+    sung = SongDraft.model_validate({**_COMPLETE, "lyrics_mode": "write"})
+
+    voice = await agent.run_turn(history=_history("sung"), draft=sung)
+    assert voice.ready is True
+    assert "sing it" in voice.reply
+
+    instruments = await agent.run_turn(
+        history=_answering(voice.reply, "female"), draft=voice.draft
+    )
+    assert "instruments" in instruments.reply
+
+    length = await agent.run_turn(
+        history=_answering(instruments.reply, "piano"), draft=instruments.draft
+    )
+    assert "How long" in length.reply
+
+    done = await agent.run_turn(
+        history=_answering(length.reply, "two minutes"), draft=length.draft
+    )
+    assert done.draft.length_seconds == 120
+    assert done.suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_a_question_nobody_answers_is_not_asked_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    "Surprise me" is an answer. It just isn't a VALUE — voice stays null — so
+    the ladder has to advance on having asked, or that one question is the only
+    thing that ever happens again.
+    """
+    monkeypatch.setattr(
+        agent, "converse_messages", FakeConverse({HAIKU: ConverseOutcome.DISABLED})
+    )
+    sung = SongDraft.model_validate({**_COMPLETE, "lyrics_mode": "write"})
+
+    asked = agent._OFFLINE_QUESTIONS["voice"]
+    result = await agent.run_turn(history=_answering(asked, "surprise me"), draft=sung)
+
+    assert result.draft.voice is None
+    assert result.reply != asked
+    assert "instruments" in result.reply
 
 
 @pytest.mark.asyncio
@@ -415,13 +503,77 @@ def test_suggestions_track_the_first_missing_field() -> None:
     assert agent._suggestions(SongDraft()) == []
     partial = SongDraft.model_validate({"prompt": "a drive"})
     assert agent._suggestions(partial) == ["Lo-Fi", "EDM", "Cinematic"]
-    assert agent._suggestions(SongDraft.model_validate(_COMPLETE)) == []
+    # An instrumental with the required four still has two questions to go.
+    complete = SongDraft.model_validate(_COMPLETE)
+    assert agent._suggestions(complete) == ["Piano", "Guitar", "Whatever fits"]
+    with_instruments = complete.merged_with(
+        SongDraft.model_validate({"instruments": ["piano"]})
+    )
+    assert agent._suggestions(with_instruments) == [
+        "30 seconds",
+        "1 minute",
+        "2 minutes",
+    ]
 
 
 def test_a_sung_song_is_asked_who_sings_it() -> None:
     sung = SongDraft.model_validate({**_COMPLETE, "lyrics_mode": "write"})
 
     assert agent._suggestions(sung) == ["Female", "Male", "Surprise me"]
+
+
+def test_the_chips_follow_the_question_that_was_actually_asked() -> None:
+    """
+    The model writes its own prose and does not always take the ladder's next
+    step. Chips for a question nobody asked are worse than no chips at all, so
+    the reply is read first and the draft is only the fallback.
+    """
+    partial = SongDraft.model_validate({"prompt": "a drive"})
+
+    asked_mood = agent._suggestions(partial, "Lovely. What mood are you after?")
+    assert asked_mood == ["Calm", "Energetic", "Dark"]
+    # Nothing recognisable in the reply: back to the first missing field.
+    assert agent._suggestions(partial, "Tell me more.") == ["Lo-Fi", "EDM", "Cinematic"]
+
+
+def test_every_chip_is_a_phrase_the_offline_parse_understands() -> None:
+    """
+    Tapping a chip has to move the draft on with Bedrock switched off, or the
+    whole feature is undevelopable without AWS. The two deliberate exceptions
+    are the brush-offs, which advance by having been asked instead.
+    """
+    empty = SongDraft()
+    assert agent._offline_delta(user_text="Lo-Fi", draft=empty).genre == "Lo-Fi"
+    assert agent._offline_delta(user_text="Calm", draft=empty).mood == "Calm"
+    assert agent._offline_delta(user_text="Piano", draft=empty).instruments == ["piano"]
+    assert agent._offline_delta(user_text="Guitar", draft=empty).instruments == [
+        "guitar"
+    ]
+    for chip, seconds in (("30 seconds", 30), ("1 minute", 60), ("2 minutes", 120)):
+        assert agent._offline_delta(user_text=chip, draft=empty).length_seconds == (
+            seconds
+        )
+
+
+def test_a_duration_is_read_the_several_ways_people_write_one() -> None:
+    assert agent._offline_length("90 seconds") == 90
+    assert agent._offline_length("about 45s") == 45
+    assert agent._offline_length("2 min") == 120
+    assert agent._offline_length("1.5 minutes") == 90
+    assert agent._offline_length("two minutes") == 120
+    assert agent._offline_length("half a minute") == 30
+    # A bare number only when it is the whole message: one inside a sentence is
+    # as likely to be a year or a BPM.
+    assert agent._offline_length("120") == 120
+    assert agent._offline_length("something like a 1997 record") is None
+
+
+def test_an_instrument_is_not_recorded_twice_under_two_names() -> None:
+    """Longest first, so "rhodes piano" does not also land as "piano"."""
+    assert agent._offline_instruments("rhodes piano and upright bass") == [
+        "rhodes piano",
+        "upright bass",
+    ]
 
 
 # ── The system prompt ──────────────────────────────────────────────────────

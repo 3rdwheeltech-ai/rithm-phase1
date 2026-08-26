@@ -26,6 +26,7 @@ THREE RULES GOVERN EVERYTHING HERE
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 
 import structlog
@@ -145,17 +146,26 @@ HOW YOU TALK
 - If they say they are done, or say "surprise me", accept it and fill in the
   rest yourself with sensible choices. Do not interrogate.
 
-WHAT YOU ARE COLLECTING, in rough priority order
+WHAT YOU ARE COLLECTING, in this order
 1. What the song is — a sentence describing the music. Everything else is
    optional next to this.
 2. Genre. It must be one of: {genres}
 3. Mood. It must be one of: {moods}
-4. Sung or instrumental. If sung: a female or male lead, or let RITHM pick.
-5. Optional extras, only if the conversation naturally reaches them:
-   instruments, length in seconds ({length_min}-{length_max}), a tempo range in
-   BPM (20-300), a title.
+4. Sung or instrumental.
+5. If sung: who sings it — a female lead, a male lead, or let RITHM pick.
+   Skip this one entirely for an instrumental.
+6. Instruments. One or two that should carry it is plenty.
+7. Length, in seconds ({length_min}-{length_max}).
+
+Ask about all of them, one at a time, and do not stop after four: who sings
+it, the instruments and the length are questions, not extras. A tempo range in
+BPM (20-300) and a title are worth raising only if they bring them up first.
+Once you have the list, say you have everything and stop asking.
 
 RULES YOU CANNOT BREAK
+- A brush-off is an answer. "Whatever fits", "you pick", "surprise me" — take
+  it, say what you'll do, and move to the next question. Never ask the same
+  thing twice.
 - Genre and mood must come from the two lists above, exactly. If they say
   "synthwave", offer the nearest one on the list ("EDM works for that — shall I
   use it?"); do not invent a genre.
@@ -397,11 +407,18 @@ _OFFLINE_GENRE = (
     + " — or any of the others."
 )
 _OFFLINE_MOOD = "And the mood — " + ", ".join(MOODS[:4]) + ", something else?"
-_OFFLINE_LYRICS = (
-    "Should it be sung, or instrumental? If it's sung I can ask RITHM for a "
-    "female or male lead."
-)
+# Deliberately keeps off the next step's words: `_TOPIC_WORDS` reads these
+# back to decide what has been asked, and "female or male lead" here would mark
+# the voice question answered before it was ever put.
+_OFFLINE_LYRICS = "Should it be sung, or instrumental?"
 _OFFLINE_VOICE = "Who should sing it — a female lead, a male lead, or shall RITHM pick?"
+_OFFLINE_INSTRUMENTS = (
+    "What instruments should carry it? Piano, guitar, strings — or leave it to RITHM."
+)
+_OFFLINE_LENGTH = (
+    f"How long should it run? Anything from {LENGTH_MIN_SECONDS} seconds to "
+    f"{LENGTH_MAX_SECONDS // 60} minutes."
+)
 
 _OFFLINE_DONE = (
     "That's everything I need. Open it in Create and you can adjust anything "
@@ -416,6 +433,108 @@ _INSTRUMENTAL_WORDS = (
     "no lyrics",
 )
 _SUNG_WORDS = ("sung", "vocals", "singing", "with words", "lyrics", "singer")
+
+# A keyword list, NOT a vocabulary: `instruments` is free text on the wire and
+# in the Create form, and this path only has to recognise the common answers.
+# Mirrors web/src/lib/suggestions.ts so a chip tapped there and a word typed
+# here land on the same string. Longest first, so "rhodes piano" is not also
+# recorded as "piano".
+_INSTRUMENT_WORDS: tuple[str, ...] = tuple(
+    sorted(
+        (
+            "electric guitar",
+            "acoustic guitar",
+            "upright bass",
+            "hammond organ",
+            "brushed snare",
+            "vinyl crackle",
+            "rhodes piano",
+            "synth pads",
+            "saxophone",
+            "808 bass",
+            "marimba",
+            "trumpet",
+            "strings",
+            "guitar",
+            "violin",
+            "drums",
+            "piano",
+            "cello",
+            "choir",
+            "flute",
+            "organ",
+            "synth",
+            "bass",
+            "harp",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+_SECONDS_RE = re.compile(r"(\d+)\s*(?:s\b|sec|second)")
+_MINUTES_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:m\b|min|minute)")
+_HALF_MINUTE_RE = re.compile(r"half a (?:min|minute)")
+# A bare number, which is what "how long?" gets answered with more often than
+# not. Only when it is the WHOLE message: a number inside a sentence is as
+# likely to be a year or a BPM.
+_BARE_NUMBER_RE = re.compile(r"^\d{1,3}$")
+
+# "two minutes" is at least as common as "120". Substituted only inside
+# `_offline_length`, and only ahead of a unit — turning the "a" in "a rainy
+# drive" into a 1 is harmless there and would not be anywhere else.
+_NUMBER_WORDS: dict[str, str] = {
+    "a": "1",
+    "an": "1",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
+_NUMBER_WORD_RE = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b")
+
+
+def _offline_instruments(lowered: str) -> list[str]:
+    """
+    Instrument names in a message, in the order they were named.
+
+    Matched longest-first so "rhodes piano" is not also recorded as "piano",
+    then put back into the order they appear in the sentence: that is the order
+    the person said them, and it is the order the chips in the DraftCard will
+    show.
+    """
+    found: list[str] = []
+    for name in _INSTRUMENT_WORDS:
+        if name in lowered and not any(name in picked for picked in found):
+            found.append(name)
+    return sorted(found, key=lowered.index)
+
+
+def _offline_length(lowered: str) -> int | None:
+    """
+    Seconds, from the handful of ways people say a duration.
+
+    Out-of-range answers are not rejected here — `_clean_int` clamps them, so
+    "5 minutes" becomes the longest track RITHM makes rather than nothing.
+    """
+    if _HALF_MINUTE_RE.search(lowered) is not None:
+        return 30
+    spelled = _NUMBER_WORD_RE.sub(lambda match: _NUMBER_WORDS[match.group(1)], lowered)
+    seconds = _SECONDS_RE.search(spelled)
+    if seconds is not None:
+        return int(seconds.group(1))
+    minutes = _MINUTES_RE.search(spelled)
+    if minutes is not None:
+        return int(float(minutes.group(1)) * 60)
+    # The bare check reads the ORIGINAL: after substitution a lone "a" is a 1.
+    bare = _BARE_NUMBER_RE.match(lowered.strip())
+    return int(bare.group(0)) if bare is not None else None
 
 
 def _offline_delta(*, user_text: str, draft: SongDraft) -> SongDraft:
@@ -448,6 +567,10 @@ def _offline_delta(*, user_text: str, draft: SongDraft) -> SongDraft:
     elif "male" in lowered:
         values["voice"] = Voice.MALE.value
 
+    length = _offline_length(lowered)
+    if length is not None:
+        values["length_seconds"] = length
+
     # The first message is the song. Every later one is an answer to a
     # question, and treating "energetic" as the whole description would
     # overwrite what they actually asked for.
@@ -455,26 +578,115 @@ def _offline_delta(*, user_text: str, draft: SongDraft) -> SongDraft:
         values["prompt"] = user_text
 
     # Carry the rest forward so the merge sees a complete picture.
-    values.setdefault("instruments", draft.instruments)
+    values["instruments"] = _offline_instruments(lowered) or draft.instruments
     return SongDraft.model_validate(values)
 
 
-def _offline_question(draft: SongDraft) -> str:
-    """The first thing still missing, asked as a fixed question."""
+_OFFLINE_QUESTIONS: dict[str, str] = {
+    "prompt": _OFFLINE_OPENING,
+    "genre": _OFFLINE_GENRE,
+    "mood": _OFFLINE_MOOD,
+    "lyrics_mode": _OFFLINE_LYRICS,
+    "voice": _OFFLINE_VOICE,
+    "instruments": _OFFLINE_INSTRUMENTS,
+    "length": _OFFLINE_LENGTH,
+}
+
+
+def _offline_question(step: str | None) -> str:
+    """The fixed question for a step. No step left means the interview is over."""
+    return _OFFLINE_QUESTIONS.get(step or "", _OFFLINE_DONE)
+
+
+# ── The ladder ─────────────────────────────────────────────────────────────
+
+_LADDER: tuple[str, ...] = (
+    "prompt",
+    "genre",
+    "mood",
+    "lyrics_mode",
+    "voice",
+    "instruments",
+    "length",
+)
+
+# What each question sounds like, so one can be recognised in prose.
+#
+# TWO JOBS. It tells the ladder that a question has already been put — the last
+# three steps cannot be answered wrong, since "surprise me" leaves voice null
+# and "whatever fits" leaves instruments empty, so asking has to be what counts
+# or the interview deadlocks one question short of done. And it tells the chips
+# which question the MODEL just asked, which beats guessing from the draft when
+# the two disagree.
+#
+# Matched in ladder order, so "sung or instrumental?" reads as the vocals
+# question rather than the instruments one. That ordering is also why the
+# instruments entry is the plural: "instrument" is a prefix of "instrumental",
+# and the vocals question would otherwise cover a step nobody had asked about.
+_TOPIC_WORDS: dict[str, tuple[str, ...]] = {
+    "genre": ("genre", "style"),
+    "mood": ("mood",),
+    "lyrics_mode": ("sung", "instrumental", "vocals", "singing"),
+    "voice": ("voice", "sing it", "sings it", "female", "male"),
+    "instruments": ("instruments", "instrumentation", "line-up", "lineup"),
+    "length": ("how long", "length", "seconds", "minute"),
+}
+
+
+def _asked_step(text: str) -> str | None:
+    """Which of the questions a piece of prose is asking, if any."""
+    lowered = text.casefold()
+    return next(
+        (
+            step
+            for step in _LADDER
+            if step in _TOPIC_WORDS
+            and any(word in lowered for word in _TOPIC_WORDS[step])
+        ),
+        None,
+    )
+
+
+def _next_step(draft: SongDraft, asked: str = "") -> str | None:
+    """
+    The first thing still missing. `asked` is the assistant's previous message.
+
+    The first four are what `draft_is_ready` wants, so they are asked until
+    they are answered. The last three are asked ONCE: they are the ones a
+    person is entitled to wave away, and a ladder that waits for a value would
+    put the same question on screen forever.
+
+    Voice, instruments and length are all asked after the draft is already
+    ready, on purpose — the DraftCard appears while the questions continue, and
+    being able to leave early is the point of "Use what we have".
+    """
     if draft.prompt is None:
-        return _OFFLINE_OPENING
+        return "prompt"
     if draft.genre is None:
-        return _OFFLINE_GENRE
+        return "genre"
     if draft.mood is None:
-        return _OFFLINE_MOOD
+        return "mood"
     if draft.lyrics_mode is None:
-        return _OFFLINE_LYRICS
-    # Asked AFTER the draft is already ready, on purpose: voice is optional, so
-    # the DraftCard appears while this question is still on screen. Being able
-    # to leave early is the point of "Use what we have".
-    if draft.lyrics_mode is not LyricsMode.INSTRUMENTAL and draft.voice is None:
-        return _OFFLINE_VOICE
-    return _OFFLINE_DONE
+        return "lyrics_mode"
+
+    lowered = asked.casefold()
+
+    def already_put(step: str) -> bool:
+        return any(word in lowered for word in _TOPIC_WORDS[step])
+
+    # Nothing sings on an instrumental — `_fields_agree` has already forced
+    # voice to AUTO there, so this is skipped rather than answered.
+    if (
+        draft.lyrics_mode is not LyricsMode.INSTRUMENTAL
+        and draft.voice is None
+        and not already_put("voice")
+    ):
+        return "voice"
+    if not draft.instruments and not already_put("instruments"):
+        return "instruments"
+    if draft.length_seconds is None and not already_put("length"):
+        return "length"
+    return None
 
 
 # ── Suggestions ────────────────────────────────────────────────────────────
@@ -484,26 +696,32 @@ _SUGGESTIONS: dict[str, list[str]] = {
     "mood": ["Calm", "Energetic", "Dark"],
     "lyrics_mode": ["Sung", "Instrumental"],
     "voice": ["Female", "Male", "Surprise me"],
+    "instruments": ["Piano", "Guitar", "Whatever fits"],
+    "length": ["30 seconds", "1 minute", "2 minutes"],
 }
 
 
-def _suggestions(draft: SongDraft) -> list[str]:
-    """
-    One-tap answers for whatever is still missing.
+def _chips(step: str | None) -> list[str]:
+    """One-tap answers to a given question. A copy: the caller owns the list."""
+    return list(_SUGGESTIONS.get(step or "", []))
 
-    Derived from the DRAFT, not asked of the model: a second structured-output
-    contract for three chips would be three more things that can silently come
-    back malformed, and the chips are a shortcut rather than the menu — the
-    text box is always there.
+
+def _suggestions(draft: SongDraft, asked: str = "") -> list[str]:
+    """
+    One-tap answers to whatever was just asked.
+
+    Derived from the DRAFT and the question, not asked of the model: a second
+    structured-output contract for three chips would be three more things that
+    can silently come back malformed, and the chips are a shortcut rather than
+    the menu — the text box is always there.
+
+    Every chip is a phrase the offline parse recognises, so tapping one moves
+    the draft on even with Bedrock switched off. "Whatever fits" and "Surprise
+    me" deliberately parse to nothing: the ladder advances on having asked.
     """
     if draft.prompt is None:
         return []
-    for name in ("genre", "mood", "lyrics_mode"):
-        if getattr(draft, name) is None:
-            return _SUGGESTIONS[name]
-    if draft.lyrics_mode is not LyricsMode.INSTRUMENTAL and draft.voice is None:
-        return _SUGGESTIONS["voice"]
-    return []
+    return _chips(_asked_step(asked) or _next_step(draft, asked))
 
 
 # ── The turn ───────────────────────────────────────────────────────────────
@@ -520,6 +738,9 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     """
     settings = get_settings()
     user_text = _last_user_text(history)
+    # The question this message is answering. It is what stops the interview
+    # asking a second time for something nobody is going to give it.
+    asked = _last_assistant_text(history)
 
     try:
         outcome, model_id, reply = await asyncio.wait_for(
@@ -541,12 +762,13 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     if outcome is ConverseOutcome.DISABLED:
         delta = _offline_delta(user_text=user_text, draft=draft)
         merged = draft.merged_with(delta)
+        step = _next_step(merged, asked)
         return TurnResult(
-            reply=_offline_question(merged),
+            reply=_offline_question(step),
             delta=delta,
             draft=merged,
             ready=draft_is_ready(merged),
-            suggestions=_suggestions(merged),
+            suggestions=_chips(step),
             offline=True,
         )
 
@@ -567,14 +789,25 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
         delta=delta,
         draft=merged,
         ready=draft_is_ready(merged),
-        suggestions=_suggestions(merged),
+        # Against the model's OWN reply: it chose the question, and chips for a
+        # different one are worse than none.
+        suggestions=_suggestions(merged, reply),
     )
 
 
 def _last_user_text(history: list[ConverseMessage]) -> str:
     """The message this turn is answering. Empty only if the caller misused this."""
+    return _last_text(history, "user")
+
+
+def _last_assistant_text(history: list[ConverseMessage]) -> str:
+    """The question being answered. Empty on the first turn of a conversation."""
+    return _last_text(history, "assistant")
+
+
+def _last_text(history: list[ConverseMessage], role: str) -> str:
     for message in reversed(history):
-        if message["role"] == "user":
+        if message["role"] == role:
             return " ".join(
                 block.get("text", "") for block in message["content"]
             ).strip()

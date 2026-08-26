@@ -111,15 +111,21 @@ test("the avatar's two doors are reachable and labelled", async ({ page }) => {
   await signIn(page, { session_id: null, messages: [], draft: EMPTY_DRAFT, ready: false });
   await page.goto("/");
 
-  // Talk is no longer a dead control: it opens the Coming Soon dialog, the
-  // treatment every other unbuilt feature gets.
+  // Talk is no longer a dead control: it is the panel's primary action, and it
+  // opens the Coming Soon dialog every other unbuilt feature gets.
   await page.getByRole("button", { name: "Talk" }).click();
   await expect(page.getByRole("dialog", { name: /Voice chat/ })).toBeVisible();
   await page.getByRole("button", { name: "Got it" }).click();
 
-  await page.getByRole("button", { name: "Chat" }).click();
+  // The toggle is a tablist, so it never collides with the button above.
+  await page.getByRole("tab", { name: "Chat" }).click();
   await expect(page.getByRole("region", { name: "AI assistant chat" })).toBeVisible();
 
   const found = await violations(page);
   expect(found, describeFailures(found)).toEqual([]);
+
+  // And back again, from inside the conversation — the thing chat had no
+  // control for at all.
+  await page.getByRole("tab", { name: "Talk" }).click();
+  await expect(page.getByRole("button", { name: "Talk" })).toBeVisible();
 });

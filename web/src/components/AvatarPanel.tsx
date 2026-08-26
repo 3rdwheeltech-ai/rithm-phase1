@@ -6,6 +6,8 @@ import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { useAssistant } from "../store/assistant";
 import AssistantAvatar from "./AssistantAvatar";
 import ComingSoonDialog from "./ComingSoonDialog";
+import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "./SpecularButton";
+import DoorToggle from "./assistant/DoorToggle";
 
 // Prompts the assistant "streams" letter-by-letter, cycling on a loop.
 const PROMPTS = [
@@ -98,11 +100,16 @@ export function StreamingPrompt({ enabled }: { enabled: boolean }) {
  * looping Lottie character framed in glass, lit from behind by a breathing brand
  * aura.
  *
- * TWO DOORS, and only one of them is built. "Chat" opens the conversational
- * panel and gets the breathing `.ai-frame-btn` outline, because the highlighted
- * door should be the one that works. "Talk" is voice, which is cut — it opens
- * a ComingSoonDialog, the same treatment AiTools, Discover and ModeToggle give
- * every unbuilt feature. It used to be a button that did nothing at all.
+ * TWO DOORS, and only one of them is built. `DoorToggle` chooses between them
+ * and stays put across the swap; this is the Talk side of it.
+ *
+ * TALK IS THE PAGE'S PRIMARY ACTION HERE, so it gets the `SpecularButton` that
+ * Create and Generate get — the same lit rim, the same size, the same weight in
+ * the eye. Voice itself is cut (STT, TTS and an upload route are a feature of
+ * their own), so pressing it opens a ComingSoonDialog: the treatment AiTools,
+ * Discover and ModeToggle give every unbuilt feature. What it must not be is
+ * the quiet secondary button it was, sitting next to a Chat that worked — that
+ * read as voice being the lesser half rather than the unfinished one.
  *
  * `src` is reserved for swapping in a different portrait image later (it takes
  * precedence over the Lottie when provided).
@@ -115,7 +122,7 @@ export default function AvatarPanel({
   className?: string;
 }) {
   const reduceMotion = usePrefersReducedMotion();
-  const openChat = useAssistant((s) => s.openChat);
+  const setMode = useAssistant((s) => s.setMode);
   const [comingSoon, setComingSoon] = useState<string | null>(null);
 
   /**
@@ -133,8 +140,8 @@ export default function AvatarPanel({
   const { data: session } = useChatSession();
   const hasTranscript = (session?.messages.length ?? 0) > 0;
   useEffect(() => {
-    if (hasTranscript) openChat();
-  }, [hasTranscript, openChat]);
+    if (hasTranscript) setMode("chat");
+  }, [hasTranscript, setMode]);
 
   // Matches the Player it stacks above, so the two read as one column of glass
   // rather than two different materials.
@@ -151,32 +158,43 @@ export default function AvatarPanel({
         AI Assistant
       </span>
 
+      {/* Same row of the panel as in ChatPanel — see DoorToggle. */}
+      <DoorToggle className="mb-3 flex w-full shrink-0 justify-center" />
+
       <AssistantAvatar src={src} />
 
       {/* Streaming assistant prompts, just below the avatar */}
       <StreamingPrompt enabled={!reduceMotion} />
 
-      <div className="mt-4 flex w-full max-w-[240px] gap-2">
-        {/* Voice is cut: STT, TTS and an upload route are a feature of their
-            own. Say so out loud rather than shipping a dead control. */}
-        <button
-          type="button"
+      {/*
+        The same control as Create's Create and Home's Generate, with the same
+        props: this is the primary action of the panel it sits in, and three
+        primary actions that look like three different things is how an app
+        stops reading as one app.
+      */}
+      <div className="mt-4 flex w-full justify-center">
+        <SpecularButton
+          size="lg"
+          radius={16}
+          tint="#ffffff"
+          tintOpacity={0}
+          blur={5}
+          textColor="#f5f5f5"
+          lineColor={SPECULAR_LINE}
+          baseColor={SPECULAR_BASE}
+          intensity={2.5}
+          shineSize={39}
+          shineFade={32}
+          thickness={2}
+          speed={1.3}
+          followMouse={false}
+          proximity={140}
+          autoAnimate={false}
           onClick={() => setComingSoon("Voice chat")}
-          className="glass-btn min-h-[44px] flex-1 rounded-el px-4 text-base font-semibold"
+          className="w-full max-w-[240px]"
         >
           Talk
-        </button>
-
-        {/* The rim marks the door that works. */}
-        <div className="ai-frame-btn flex-1">
-          <button
-            type="button"
-            onClick={openChat}
-            className="glass-btn glass-btn-solid min-h-[44px] w-full rounded-el px-4 text-base font-semibold"
-          >
-            Chat
-          </button>
-        </div>
+        </SpecularButton>
       </div>
 
       {/* Portalled, so the `backdrop-filter` on this panel cannot become its

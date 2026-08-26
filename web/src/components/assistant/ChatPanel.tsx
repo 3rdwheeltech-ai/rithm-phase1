@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { RotateCcw, X } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { useLens } from "../../lib/useLens";
 import { mergeRefs, useSpecular } from "../../lib/useSpecular";
 import { EMPTY_DRAFT, useChatSession, useResetChat, useSendChatMessage } from "../../hooks/useChat";
-import { useAssistant } from "../../store/assistant";
 import {
   ASSISTANT_UNAVAILABLE_TYPE,
   CHAT_SESSION_FULL_TYPE,
@@ -15,6 +14,7 @@ import {
 import AssistantAvatar from "../AssistantAvatar";
 import ChatMessage from "./ChatMessage";
 import Composer from "./Composer";
+import DoorToggle from "./DoorToggle";
 import DraftCard from "./DraftCard";
 
 const OPENING_LINE =
@@ -44,7 +44,6 @@ const OPENING_LINE =
  */
 export default function ChatPanel({ className = "" }: { className?: string }) {
   const nav = useNavigate();
-  const closeChat = useAssistant((s) => s.closeChat);
 
   const { data: session } = useChatSession();
   const send = useSendChatMessage();
@@ -146,16 +145,14 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
         >
           <RotateCcw className="h-4 w-4" strokeWidth={2} />
         </button>
-        <button
-          type="button"
-          onClick={closeChat}
-          title="Close chat"
-          aria-label="Close chat"
-          className="flex h-7 w-7 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
-        >
-          <X className="h-4 w-4" strokeWidth={2} />
-        </button>
       </header>
+
+      {/*
+        The way out, and the way to voice, in one control — an X here would
+        have meant the same thing while naming neither. Same row of the panel
+        as in AvatarPanel, so switching does not move it.
+      */}
+      <DoorToggle className="mb-3 flex shrink-0 justify-center" />
 
       {/*
         `role="log"` carries an implicit `aria-live="polite"`, which is what

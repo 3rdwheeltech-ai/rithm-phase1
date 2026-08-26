@@ -134,7 +134,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <ChatPanel className="min-h-0 flex-1" />
             </Suspense>
           ) : (
-            <Suspense fallback={<div className="lg-lens h-[400px] shrink-0" />}>
+            <Suspense fallback={<div className="lg-lens h-[480px] shrink-0" />}>
               <AvatarPanel className="shrink-0" />
             </Suspense>
           ))}

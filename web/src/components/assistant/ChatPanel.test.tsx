@@ -84,7 +84,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAssistant.setState({ mode: "idle" });
+  useAssistant.setState({ mode: "talk" });
 });
 
 /**
@@ -280,15 +280,17 @@ describe("ChatPanel", () => {
     });
   });
 
-  it("closes back to the avatar without touching the conversation", async () => {
+  it("switches back to Talk without touching the conversation", async () => {
     const user = userEvent.setup();
     serve(session({ messages: [{ id: "m0", role: "user", content: "hi", created_at: "2026-08-25T12:00:00Z" }] }));
     renderWithProviders(<ChatPanel />);
 
-    await user.click(await screen.findByRole("button", { name: "Close chat" }));
+    // The toggle is the way out. There is no separate close: an X would have
+    // done exactly this while naming neither where it went nor what it left.
+    await user.click(await screen.findByRole("tab", { name: "Talk" }));
 
-    expect(useAssistant.getState().mode).toBe("idle");
-    // Closing is a UI state change, not a DELETE — the transcript is durable.
+    expect(useAssistant.getState().mode).toBe("talk");
+    // Leaving is a UI state change, not a DELETE — the transcript is durable.
     expect(
       fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "DELETE"),
     ).toHaveLength(0);
