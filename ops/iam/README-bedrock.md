@@ -34,18 +34,47 @@ whichever region it routes the call to. Grant only the profile and it works —
 until the day traffic routes to `us-west-2`, and then it is an intermittent
 `AccessDeniedException` that nothing in the logs explains.
 
-## A3 — the task definition still needs the env vars
+## A3 — the task definition env vars — APPLIED 2026-08-26 (rev 15)
 
-As of 2026-08-24 the live `rithm-api` task definition (rev 13) carries only the
-DEAD `BEDROCK_HAIKU_MODEL_ID` from Day 1 — a setting nothing reads any more,
-safe to drop — and none of `BEDROCK_ENABLED`, `BEDROCK_LYRICS_MODEL_ID` or
-`BEDROCK_TITLE_MODEL_ID`. **`BEDROCK_ENABLED` defaults to False, so until they
-are added the feature is entirely off in production** and every track gets a
-prompt-derived title with `lyrics_source=acestep`.
+`BEDROCK_ENABLED`, `BEDROCK_LYRICS_MODEL_ID` and `BEDROCK_TITLE_MODEL_ID` are
+now on the live definition, and the dead `BEDROCK_HAIKU_MODEL_ID` from Day 1 is
+dropped. Until this landed the feature was entirely OFF in production —
+`BEDROCK_ENABLED` defaults to False — so every track since the image carrying
+it went out got a prompt-derived title and `lyrics_source=acestep`, including
+prompt-mode requests that had a perfectly good `lyrics_prompt`.
+
+**Nothing in the logs said so.** `converse` logs `bedrock_disabled` at DEBUG and
+the task runs at `LOG_LEVEL=INFO`, so the switched-off path is silent: a
+generate produces `sqs_message_sent` and `job_submitted` and no authoring line
+at all. Absence of `lyrics_authored` AND absence of `bedrock_converse_failed`
+is the signature — check it before suspecting model access.
+
+`.github/workflows/deploy-api.yml` patches only `.image`, by design, so editing
+`ops/task-definitions/api.json.template` does NOT ship env vars. Describe,
+patch, register:
+
+```bash
+aws ecs describe-task-definition --task-definition rithm-api --query taskDefinition > td.json
+jq '.containerDefinitions[0].environment = (
+      [.containerDefinitions[0].environment[] | select(.name != "BEDROCK_HAIKU_MODEL_ID")] + [
+        {name:"BEDROCK_ENABLED", value:"true"},
+        {name:"BEDROCK_LYRICS_MODEL_ID", value:"us.amazon.nova-2-lite-v1:0"},
+        {name:"BEDROCK_TITLE_MODEL_ID", value:"amazon.nova-micro-v1:0"}
+      ])
+    | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,
+          .registeredAt,.registeredBy,.deregisteredAt)' td.json > new-td.json
+aws ecs register-task-definition --cli-input-json file://new-td.json --query 'taskDefinition.revision'
+aws ecs update-service --cluster rithm-prod --service rithm-api-service-pqqbkv2h \
+  --task-definition rithm-api:<REV>
+```
 
 Do this LAST, after the API image carrying the feature is deployed. Setting it
 on an image without the code does nothing, and doing it first means the switch
 is on before the thing it switches exists.
+
+`BEDROCK_CHAT_MODEL_IDS` is deliberately NOT on rev 15: the chat assistant is
+not deployed yet, and its Settings default already carries the same chain. Add
+it with the image that needs it.
 
 ## Two gates, not one
 
