@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { RotateCcw, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../../lib/api";
+import { OPENING_LINE } from "../../lib/chat";
 import { cn } from "../../lib/cn";
 import { useLens } from "../../lib/useLens";
 import { mergeRefs, useSpecular } from "../../lib/useSpecular";
@@ -17,9 +18,6 @@ import ChatMessage from "./ChatMessage";
 import Composer from "./Composer";
 import DoorToggle from "./DoorToggle";
 import DraftCard from "./DraftCard";
-
-const OPENING_LINE =
-  "Tell me about the song you want — a scene, a feeling, anything at all.";
 
 /**
  * The conversational door onto Create.
@@ -42,8 +40,25 @@ const OPENING_LINE =
  * This is the ONLY new `.lg-lens` in the feature. index.css names four on
  * screen at once as the ceiling and Home already spends all four; this one
  * takes AvatarPanel's slot. No lens on the DraftCard, the Composer or a bubble.
+ *
+ * `chrome="plain"` IS THE MOBILE SHEET'S VARIANT, and it exists because of
+ * that same budget rather than for taste. Inside `VoiceSheet` this renders on
+ * top of a Home page that is already spending all four lenses — and covering
+ * them does not free them, because they are still in the DOM and still
+ * compositing. So the sheet gets `.surface` and no lens at all, which is what
+ * `DraftCard` does for the same reason.
+ *
+ * A prop rather than a second component: everything else about the two is
+ * identical, and a duplicate chat panel is two things that have to agree about
+ * how a turn folds into the cache.
  */
-export default function ChatPanel({ className = "" }: { className?: string }) {
+export default function ChatPanel({
+  className = "",
+  chrome = "lens",
+}: {
+  className?: string;
+  chrome?: "lens" | "plain";
+}) {
   const nav = useNavigate();
   const setMode = useAssistant((s) => s.setMode);
 
@@ -66,8 +81,11 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
   const ready = session?.ready ?? false;
   const busy = send.isPending;
 
+  // Both hooks are called unconditionally — hooks rules, and they are cheap
+  // no-ops when their ref never lands on an element.
   const lensRef = useLens<HTMLElement>("md", 24);
   const specularRef = useSpecular<HTMLElement>();
+  const lens = chrome === "lens";
 
   // Follow the conversation. `scrollTop` rather than scrollIntoView: the
   // latter walks up to the nearest scrollable ancestor and would move the
@@ -110,7 +128,7 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
 
   function onSend(message: string) {
     setPending(message);
-    send.mutate(message, { onSettled: () => setPending(null) });
+    send.mutate({ message }, { onSettled: () => setPending(null) });
   }
 
   const error = send.error;
@@ -128,10 +146,14 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
 
   return (
     <section
-      ref={mergeRefs(lensRef, specularRef, panelRef)}
+      ref={lens ? mergeRefs(lensRef, specularRef, panelRef) : panelRef}
       aria-label="AI assistant chat"
-      className={cn("lg-lens relative flex flex-col overflow-hidden p-4", className)}
-      style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
+      className={cn(
+        "relative flex flex-col overflow-hidden p-4",
+        lens ? "lg-lens" : "surface rounded-card",
+        className,
+      )}
+      style={lens ? ({ "--r": "24px", "--pad": "16px" } as React.CSSProperties) : undefined}
     >
       <header className="mb-3 flex shrink-0 items-center gap-2">
         <AssistantAvatar variant="chip" className="h-8 w-8" />

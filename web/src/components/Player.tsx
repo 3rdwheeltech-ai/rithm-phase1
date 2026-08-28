@@ -22,6 +22,7 @@ import { useHoverIntent } from "../lib/useHoverIntent";
 import { useLens } from "../lib/useLens";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { formatDuration, trackTags, trackTitle } from "../lib/track";
+import { useAssistant } from "../store/assistant";
 import { useChrome } from "../store/chrome";
 import { useCreateUI } from "../store/createUI";
 import { hasNext, hasPrevious, usePlayer } from "../store/player";
@@ -298,6 +299,10 @@ export default function Player({
 
   const track = usePlayer((s) => s.track);
   const playing = usePlayer((s) => s.isPlaying);
+  // A call is running somewhere in the app. See `toggle` below.
+  const voiceLive = useAssistant(
+    (s) => s.voiceStatus !== "idle" && s.voiceStatus !== "unavailable",
+  );
   const setPlaying = usePlayer((s) => s.setPlaying);
   const setTrack = usePlayer((s) => s.setTrack);
   const setPosition = usePlayer((s) => s.setPosition);
@@ -452,6 +457,23 @@ export default function Player({
   const toggle = useCallback(() => {
     const el = audioRef.current;
     if (!track || !el) return;
+    /*
+      A LIVE VOICE CALL BLOCKS PLAY, and it says so rather than doing nothing.
+
+      Anam's speech-to-text would transcribe the song's own lyrics as user
+      speech, POST them to /chat/messages, and leave the daily cap burned, the
+      draft corrupted with words nobody said, and a transcript full of
+      sentences the user never uttered. Muting the microphone does not fix it:
+      browser echo cancellation references the whole output device and cannot
+      subtract an element it does not know about.
+
+      Pausing is the other half of this rule and lives in `useVoiceSession`'s
+      `start`, where it happens the moment Talk is pressed.
+    */
+    if (!playing && voiceLive) {
+      flashHint("End the call to play");
+      return;
+    }
     if (playing) {
       el.pause();
       setPlaying(false);
@@ -459,7 +481,7 @@ export default function Player({
       void el.play().catch(() => setPlaying(false));
       setPlaying(true);
     }
-  }, [playing, setPlaying, track]);
+  }, [playing, setPlaying, track, voiceLive]);
 
   const scrub = useCallback((deltaSeconds: number) => {
     const el = audioRef.current;
@@ -582,6 +604,15 @@ export default function Player({
           preload="metadata"
           data-testid="player-audio"
         />
+
+        {/* The mini bar is the only player surface on mobile, which is where
+            the voice sheet lives — so the refusal above needs to be readable
+            here too, not only in the desktop panel. */}
+        {track && hint && (
+          <p className="mx-auto mb-1 max-w-[420px] text-center text-2xs text-ink-faint">
+            {hint}
+          </p>
+        )}
 
         {track && (
           <div

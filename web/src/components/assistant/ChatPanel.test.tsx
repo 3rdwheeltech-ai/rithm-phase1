@@ -131,8 +131,12 @@ describe("ChatPanel", () => {
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([, init]) => (init as RequestInit)?.method === "POST");
       expect(post).toBeDefined();
+      // `source` is explicit, not incidental: the chat door must never post
+      // "voice", because that flag writes `sessions.voice_enabled` and shows
+      // up on the `chat_turn` log line the voice rollout is read from.
       expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
         message: "a rainy drive",
+        source: "chat",
       });
     });
     expect(await screen.findByText("Nice one.")).toBeInTheDocument();
@@ -280,6 +284,7 @@ describe("ChatPanel", () => {
       const last = posts[posts.length - 1]!;
       expect(JSON.parse((last[1] as RequestInit).body as string)).toEqual({
         message: "Lo-Fi",
+        source: "chat",
       });
     });
   });

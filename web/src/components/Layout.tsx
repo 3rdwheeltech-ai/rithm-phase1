@@ -21,6 +21,12 @@ const AvatarPanel = lazy(() => import("./AvatarPanel"));
 // would walk those 400kB straight back into the entry chunk and undo the split
 // above.
 const ChatPanel = lazy(() => import("./assistant/ChatPanel"));
+// Lazy for a THIRD reason, and it is the mobile one: the sheet is only reached
+// by pressing a control on the Home card, so a phone that never does pays
+// nothing for it. It imports `AssistantPoster`, never `AssistantAvatar` — the
+// latter statically imports the Lottie renderer, which would put ~400kB back
+// on every phone and undo the split above.
+const VoiceSheet = lazy(() => import("./assistant/VoiceSheet"));
 
 /** Which shape the shell is in. Home and Create own the right column outright. */
 export type ShellVariant = "home" | "create" | "rail" | "mobile";
@@ -96,6 +102,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const hasTrack = usePlayer((s) => s.track !== null);
   const chatting = useAssistant((s) => s.mode === "chat");
+  const sheetMounted = useAssistant((s) => s.sheetOpen);
   // Pinning a rail widens the gutter it sits in, so the page reflows around it
   // instead of being covered — see `shellMargin` and `store/chrome.ts`.
   const navPinned = useChrome((s) => s.navPinned);
@@ -225,6 +232,18 @@ export default function Layout({ children }: { children: ReactNode }) {
         height="calc(var(--dock) + env(safe-area-inset-bottom))"
         className="fixed bottom-0 z-20 lg:hidden"
       />
+
+      {/*
+        Mounted beside TabBar rather than inside the page, because it portals to
+        `document.body` and must outlive any route that opened it. `sheetOpen`
+        gates the MOUNT, so nothing is downloaded until someone presses Talk or
+        Chat on the Home card.
+      */}
+      {variant === "mobile" && sheetMounted && (
+        <Suspense fallback={null}>
+          <VoiceSheet />
+        </Suspense>
+      )}
 
       <TabBar name={name} email={user?.email ?? null} onSignOut={signOut} />
     </div>

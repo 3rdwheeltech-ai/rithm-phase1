@@ -1,10 +1,16 @@
 """
 The chat assistant's HTTP surface.
 
-Three routes, all scoped to the caller. There is no session id in any path —
+Five routes, all scoped to the caller. There is no session id in any path —
 every route resolves the user's ONE live session from `require_user`, which is
 what makes another user's conversation invisible by construction rather than by
 an ownership check somebody has to remember to write.
+
+The two voice routes sit under /chat rather than under a new top-level
+/voice: this module's paths are all under /chat and collide with nothing above
+it in main.py, and a new prefix quietly voids that. /session rather than
+/session-token, because the response carries a lease and the DELETE is
+genuinely about a session.
 
 Mounted under /api/v1 in main.py. No ops change is needed for routing:
 CloudFront's `/api/*` behaviour forwards wholesale to the ALB, whose listener
@@ -15,9 +21,11 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Response, status
+from uuid_utils import uuid7
 
 from app.config import get_settings
-from app.modules.conversation import agent
+from app.modules.conversation import agent, anam
+from app.modules.conversation.lease import voice_lease, voice_starts
 from app.modules.conversation.models import Message, MessageRole, SessionState
 from app.modules.conversation.schemas import (
     ChatMessageOut,
@@ -25,6 +33,7 @@ from app.modules.conversation.schemas import (
     ChatTurnRequest,
     ChatTurnResponse,
     SongDraft,
+    VoiceSessionResponse,
 )
 from app.modules.conversation.service import conversation_service, count_tokens
 from app.shared.auth import require_user
@@ -32,6 +41,8 @@ from app.shared.aws import ConverseMessage
 from app.shared.exceptions import (
     ChatSessionFullException,
     RateLimitExceededException,
+    VoiceNotConfiguredException,
+    VoiceQuotaExceededException,
 )
 
 logger = structlog.get_logger()
@@ -43,6 +54,12 @@ router = APIRouter(tags=["conversation"])
 # path nobody should ever reach. An hour is a "check back later" hint, and its
 # job is to stop a client retrying in a loop rather than to name a deadline.
 _DAILY_RETRY_AFTER_SECONDS = 3600
+
+# What a user over their daily VOICE cap is told to wait. An hour, for the same
+# reason and with the same honesty as the constant above: the window is rolling,
+# so no single moment frees it up, and the number's job is to stop a client
+# retrying in a loop rather than to name a deadline.
+_VOICE_QUOTA_RETRY_AFTER_SECONDS = 3600
 
 
 def _out(message: Message) -> ChatMessageOut:
@@ -81,11 +98,19 @@ async def get_chat_session(
     Creates NOTHING. A user who opens the panel and closes it again must not
     leave a row behind, so the session is created lazily on their first
     message instead (see service.start).
+
+    It also carries `voice_available`, which is how the SPA learns whether to
+    offer Talk WITHOUT spending the one global Anam slot to find out.
     """
+    settings = get_settings()
     session = await conversation_service.load(user_id=user_id)
     if session is None:
         return ChatSessionResponse(
-            session_id=None, messages=[], draft=SongDraft(), ready=False
+            session_id=None,
+            messages=[],
+            draft=SongDraft(),
+            ready=False,
+            voice_available=settings.anam_enabled,
         )
 
     messages = await conversation_service.transcript(session_id=session.id)
@@ -98,6 +123,7 @@ async def get_chat_session(
         # rather than a decoration — and one reader means the two can never
         # disagree about what the SPA should show.
         ready=session.current_state == SessionState.READY_TO_EXPORT.value,
+        voice_available=settings.anam_enabled,
     )
 
 
@@ -115,6 +141,10 @@ async def post_chat_message(
     a rollback would silently eat what they typed.
     """
     settings = get_settings()
+    # Which door this came through. The transport is the ONLY thing that
+    # differs: the same agent, the same draft, the same caps, the same
+    # transcript. Talk and Chat are two doors on one conversation.
+    voice = body.source == "voice"
 
     # The DAILY cap first, because it is the only check that needs no session —
     # and a user who is over it must not have an empty session row created for
@@ -160,6 +190,10 @@ async def post_chat_message(
         session_id=session.id,
         draft=result.draft.model_dump(mode="json"),
         ready=result.ready,
+        # Rides the write that was already happening — no extra round trip and
+        # no new service method. This is what finally gives
+        # `sessions.voice_enabled` a writer.
+        voice=voice,
     )
     assistant_message = await conversation_service.append(
         session_id=session.id,
@@ -177,6 +211,9 @@ async def post_chat_message(
         ready=result.ready,
         turns=turns + 1,
         history_messages=len(history),
+        # Makes "how much of our traffic is voice, and is it slower?"
+        # answerable from CloudWatch rather than from a guess.
+        voice=voice,
     )
     return ChatTurnResponse(
         message=_out(assistant_message),
@@ -199,4 +236,93 @@ async def delete_chat_session(user_id: UUID = Depends(require_user)) -> Response
     session = await conversation_service.load(user_id=user_id)
     if session is not None:
         await conversation_service.soft_delete(session_id=session.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── Voice ──────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/chat/voice/session",
+    response_model=VoiceSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_voice_session(
+    response: Response,
+    user_id: UUID = Depends(require_user),
+) -> VoiceSessionResponse:
+    """
+    Mint one Anam session token, and take the one global slot while it lasts.
+
+    POST, NOT GET, even though it reads nothing: it mints a credential, spends
+    metered minutes and claims a slot that is global to the whole product. GET
+    is the verb browsers prefetch, link-checkers follow and caches are tempted
+    to keep.
+
+    THE ORDER OF OPERATIONS IS THE DESIGN:
+
+    1. Not configured → 501 BEFORE anything else, so a deployment with no key
+       costs zero outbound requests.
+    2. This user's daily cap on session starts → 429.
+    3. Claim the lease → 429 with a real Retry-After if someone else holds it.
+    4. Mint. On ANY failure, release the lease and re-raise — otherwise a vendor
+       outage parks the one slot for three minutes.
+    5. Count the start, and answer with `Cache-Control: no-store`.
+    """
+    settings = get_settings()
+
+    if not settings.anam_enabled:
+        raise VoiceNotConfiguredException()
+
+    started_today = await voice_starts.count(user_id=user_id)
+    if started_today >= settings.anam_max_sessions_per_user_per_day:
+        raise VoiceQuotaExceededException(
+            limit=settings.anam_max_sessions_per_user_per_day,
+            retry_after_seconds=_VOICE_QUOTA_RETRY_AFTER_SECONDS,
+        )
+
+    # ADVISORY toward Anam, so the TTL must exceed the session cap: a client
+    # that overruns must still be holding a lease when it does, or the lease
+    # has lied to the next caller.
+    ttl = settings.anam_session_seconds + settings.anam_lease_slack_seconds
+    lease_id = UUID(str(uuid7()))
+    lease = await voice_lease.claim(user_id=user_id, lease_id=lease_id, ttl_seconds=ttl)
+
+    try:
+        session_token = await anam.mint_session_token()
+    except Exception:
+        # Claim before minting, release on the failure path. Without this a
+        # vendor outage holds the product's only slot for the full TTL.
+        await voice_lease.release(lease_id=lease.lease_id, user_id=user_id)
+        raise
+
+    await voice_starts.record(user_id=user_id)
+
+    # The token outlives its usefulness by twenty times. Nothing may keep it.
+    response.headers["Cache-Control"] = "no-store"
+    logger.info("voice_session_started", ttl_seconds=ttl)
+    return VoiceSessionResponse(
+        session_token=session_token,
+        expires_in_seconds=settings.anam_session_seconds,
+        lease_id=lease.lease_id,
+    )
+
+
+@router.delete("/chat/voice/session", status_code=status.HTTP_204_NO_CONTENT)
+async def end_voice_session(
+    lease_id: UUID,
+    user_id: UUID = Depends(require_user),
+) -> Response:
+    """
+    Hand the slot back. Idempotent — releasing a lease you do not hold is
+    already the desired end state, so this is 204 either way.
+
+    It takes the lease id because a STALE tab's unload must not free the slot
+    the user's current tab is holding. The lease's TTL is the real guarantee
+    behind this call: `navigator.sendBeacon` cannot set an Authorization
+    header, so the unload path is `fetch(..., {keepalive: true})`, which
+    Firefox before 133 does not implement. This is an optimisation on top of
+    the TTL, never the recovery story.
+    """
+    await voice_lease.release(lease_id=lease_id, user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

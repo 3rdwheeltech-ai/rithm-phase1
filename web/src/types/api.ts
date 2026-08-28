@@ -243,6 +243,18 @@ export interface ChatSessionResponse {
   messages: ChatMessage[];
   draft: SongDraft;
   ready: boolean;
+  /**
+   * Whether this deployment has a voice avatar at all.
+   *
+   * It rides on THIS response rather than being probed, because asking the
+   * token route would mint a credential and claim the product's one global
+   * Anam slot to answer a yes/no question. This query is already fetched on
+   * Home mount with `staleTime: Infinity`, so discovery costs no request.
+   *
+   * Optional on the wire for the deploy window: an API that predates voice
+   * omits it, and `false` is the correct reading of that.
+   */
+  voice_available?: boolean;
 }
 
 /** What one chat turn may carry. Mirrors CHAT_MESSAGE_MAX_LENGTH on the server. */
@@ -261,3 +273,31 @@ export const CHAT_MESSAGE_MAX_LENGTH = 1000;
  */
 export const ASSISTANT_UNAVAILABLE_TYPE = "https://rithm.dev/errors/assistant-unavailable";
 export const CHAT_SESSION_FULL_TYPE = "https://rithm.dev/errors/chat-session-full";
+
+/**
+ * The four voice problem types, and they are four rather than one because the
+ * panel says something different for each.
+ *
+ * 501 NOT-CONFIGURED is the one that matters most: it means voice was never
+ * here, and the panel must be bit-for-bit what ships today — the Lottie, the
+ * streaming prompt, and Talk opening the Coming Soon dialog. The other three
+ * mean voice exists and this attempt failed, which names a reason and keeps
+ * Talk a live control.
+ *
+ * 429 AT-CAPACITY is the ordinary second-user path on the free tier, not an
+ * incident: someone else in the product is talking, and `retry_after_seconds`
+ * on the body is a real number computed from a live lease.
+ */
+export const VOICE_NOT_CONFIGURED_TYPE = "https://rithm.dev/errors/voice-not-configured";
+export const VOICE_AT_CAPACITY_TYPE = "https://rithm.dev/errors/voice-at-capacity";
+export const VOICE_QUOTA_EXCEEDED_TYPE = "https://rithm.dev/errors/voice-quota-exceeded";
+export const VOICE_UNAVAILABLE_TYPE = "https://rithm.dev/errors/voice-unavailable";
+
+/** POST /chat/voice/session. Never cached, never logged — see the server's copy. */
+export interface VoiceSessionResponse {
+  session_token: string;
+  /** The countdown runs off THIS, never off a hardcoded 180. */
+  expires_in_seconds: number;
+  /** Proves ownership of the slot on DELETE, so a stale tab cannot free it. */
+  lease_id: string;
+}

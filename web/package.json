@@ -13,6 +13,7 @@
     "a11y": "pa11y-ci"
   },
   "dependencies": {
+    "@anam-ai/js-sdk": "^4.26.0",
     "@tanstack/react-query": "^5.40.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",

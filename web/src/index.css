@@ -914,6 +914,20 @@
   .avatar-aura {
     animation: avatar-aura-pulse 3.2s ease-in-out infinite;
   }
+
+  /*
+    The assistant is working on a turn.
+
+    ONE CLASS, and the same one over the Anam video and over the Lottie, so the
+    two speak the same "I'm working" language — which matters because a user
+    may see both faces in a single session, and a fallback that animates
+    differently reads as a different feature rather than the same one carrying
+    on. It is the second of the three layers covering the ~3s Bedrock turn; the
+    first, and the one doing the real work, is the caption appearing at 0ms.
+  */
+  .avatar-aura-thinking {
+    animation-duration: 1.1s;
+  }
 }
 
 @keyframes caret-blink {

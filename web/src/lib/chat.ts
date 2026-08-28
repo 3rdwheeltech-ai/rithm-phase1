@@ -9,6 +9,18 @@ import {
 } from "../types/api";
 
 /**
+ * What the assistant opens with, in ONE place.
+ *
+ * Lifted out of `ChatPanel` because there are two doors onto this conversation
+ * now and they must say the same words. Two doors on one conversation that
+ * open with different greetings are two features again — and the voice door
+ * speaks this string aloud where the chat door renders it, so a drift here is
+ * a drift the user can hear.
+ */
+export const OPENING_LINE =
+  "Tell me about the song you want — a scene, a feeling, anything at all.";
+
+/**
  * The Create form's initial state, in one place.
  *
  * These are the values the form opens with when nothing has been handed to it,

@@ -96,6 +96,9 @@ class FakeConversationDb:
                 if str(row["id"]) == args["id"]:
                     row["draft"] = args["draft"]
                     row["current_state"] = args["state"]
+                    # `voice_enabled = voice_enabled OR :voice` — sticky, so a
+                    # conversation continued by typing does not un-mark itself.
+                    row["voice_enabled"] = row["voice_enabled"] or args["voice"]
             return FakeResult([])
 
         if sql.startswith("UPDATE conversation.sessions SET deleted_at"):
@@ -608,3 +611,111 @@ async def test_the_fake_database_is_actually_being_exercised(
     assert any(s.startswith("INSERT INTO conversation.sessions") for s in db.statements)
     assert any("ON CONFLICT DO NOTHING" in s for s in db.statements)
     assert any("CAST(:draft AS JSONB)" in s for s in db.statements)
+
+
+# ── Voice, through the chat door ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_voice_available_tracks_the_setting_in_both_directions(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    How the SPA learns voice exists without spending the one global Anam slot
+    to find out. Both directions, because the interesting one is `false`: it is
+    what keeps today's panel — Lottie, StreamingPrompt, Talk to Coming Soon —
+    bit-for-bit in every environment without a key.
+    """
+    from app.config import get_settings
+
+    assert (await client.get("/api/v1/chat/session")).json()["voice_available"] is False
+
+    monkeypatch.setenv("ANAM_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        body = (await client.get("/api/v1/chat/session")).json()
+        assert body["voice_available"] is True
+    finally:
+        monkeypatch.delenv("ANAM_ENABLED", raising=False)
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_source_defaults_to_chat_so_an_older_client_still_works(
+    client: AsyncClient, db: FakeConversationDb
+) -> None:
+    """
+    The deploy window. An SPA that predates voice posts no `source` at all, and
+    it must keep working — and must not mark the session voice-enabled.
+    """
+    response = await client.post(
+        "/api/v1/chat/messages", json={"message": "a rainy drive"}
+    )
+
+    assert response.status_code == 200
+    assert db.sessions[0]["voice_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_voice_turn_marks_the_session_voice_enabled(
+    client: AsyncClient, db: FakeConversationDb
+) -> None:
+    """
+    `sessions.voice_enabled` has existed since the baseline migration and has
+    never had a writer. This is it — and it needs no DDL.
+    """
+    await client.post(
+        "/api/v1/chat/messages",
+        json={"message": "a rainy drive", "source": "voice"},
+    )
+
+    assert db.sessions[0]["voice_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_voice_flag_is_sticky_across_a_typed_turn(
+    client: AsyncClient, db: FakeConversationDb
+) -> None:
+    """
+    Two doors, ONE conversation. A session held half by voice and half by
+    typing was still a voice conversation; the Chat door must not erase that.
+    """
+    await client.post(
+        "/api/v1/chat/messages",
+        json={"message": "a rainy drive", "source": "voice"},
+    )
+    await client.post("/api/v1/chat/messages", json={"message": "lo-fi"})
+
+    assert db.sessions[0]["voice_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_source_is_refused(client: AsyncClient) -> None:
+    """A Literal, not a free string: the log line and the column both read it."""
+    response = await client.post(
+        "/api/v1/chat/messages", json={"message": "hi", "source": "telepathy"}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_voice_turn_runs_the_same_agent_and_fills_the_same_draft(
+    client: AsyncClient,
+) -> None:
+    """
+    THE CENTRAL DESIGN DECISION, asserted on the server side. Anam is a face
+    and a voice; the transport is the only thing `source` changes.
+    """
+    turn = await client.post(
+        "/api/v1/chat/messages",
+        json={"message": "a rainy drive through neon streets", "source": "voice"},
+    )
+
+    body = turn.json()
+    assert body["message"]["role"] == "assistant"
+    assert body["draft"]["prompt"] == "a rainy drive through neon streets"
+
+    # And it is in the SAME transcript the Chat door reads.
+    resumed = (await client.get("/api/v1/chat/session")).json()
+    assert [m["role"] for m in resumed["messages"]] == ["user", "assistant"]

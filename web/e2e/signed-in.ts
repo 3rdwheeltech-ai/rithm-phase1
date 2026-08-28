@@ -50,6 +50,17 @@ export interface ChatFixture {
   messages: { id: string; role: "user" | "assistant"; content: string; created_at: string }[];
   draft: Record<string, unknown>;
   ready: boolean;
+  /**
+   * Whether this "deployment" has a voice avatar.
+   *
+   * Both branches are worth running, and the FALSE one is not a placeholder:
+   * with voice unconfigured the panel must be bit-for-bit what shipped before
+   * it existed — Lottie, streaming prompt, Talk opening the Coming Soon
+   * dialog. That is what `chat-a11y.spec.ts`'s existing "two doors" assertion
+   * checks, unchanged, and it is the state every environment without an Anam
+   * key is in.
+   */
+  voice_available?: boolean;
 }
 
 /**
@@ -75,6 +86,22 @@ export async function signIn(page: Page, chat: ChatFixture): Promise<void> {
     [EMAIL, "rithm-auth"] as const,
   );
 
+  /*
+    THE CATCH-ALL GOES FIRST, and that is not cosmetic.
+
+    Playwright matches routes in REVERSE registration order — the most
+    recently added handler wins. Registered last, as it was, this pattern
+    swallowed every specific route below it: `/tracks` answered `{}` instead of
+    `[]`, the shell died on `.map is not a function`, and the page rendered
+    blank. Every spec in this suite then failed on a missing control rather
+    than on anything it was testing.
+
+    Registering it first makes it the FALLBACK it is written to be: an empty
+    200 for anything unhandled, which beats a hung request leaving a spinner on
+    screen for axe to measure.
+  */
+  await page.route("**/api/v1/**", (route) => route.fulfill(json({})));
+
   await page.route("**/api/v1/auth/refresh", (route) =>
     route.fulfill(json({ id_token: fakeIdToken(), refresh_token: null })),
   );
@@ -84,13 +111,33 @@ export async function signIn(page: Page, chat: ChatFixture): Promise<void> {
   await page.route("**/api/v1/chat/session", (route) =>
     route.request().method() === "DELETE"
       ? route.fulfill({ status: 204, body: "" })
-      : route.fulfill(json(chat)),
+      : route.fulfill(json({ voice_available: false, ...chat })),
+  );
+  /*
+    The voice mint, refused.
+
+    Chromium HAS WebRTC but there is no Anam to reach, so the useful thing to
+    stub is a refusal — which exercises the fallback path real users hit on a
+    bad network, and is the right a11y surface to run axe over. Declared BEFORE
+    the catch-all below, which would otherwise answer it with an empty 200.
+  */
+  await page.route("**/api/v1/chat/voice/session", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill(
+          json(
+            {
+              type: "https://rithm.dev/errors/voice-unavailable",
+              title: "Voice could not start just now.",
+              status: 503,
+              detail: "Voice could not start just now. You can still chat.",
+            },
+            503,
+          ),
+        )
+      : route.fulfill({ status: 204, body: "" }),
   );
   // The library list is a bare array with pagination in headers.
   await page.route("**/api/v1/tracks**", (route) => route.fulfill(json([])));
-  // Anything else this shell asks for: an empty 200 beats a hung request that
-  // leaves a spinner on screen for axe to measure.
-  await page.route("**/api/v1/**", (route) => route.fulfill(json({})));
 }
 
 export const EMPTY_DRAFT: Record<string, unknown> = {

@@ -167,3 +167,103 @@ class ChatSessionFullException(HTTPException):
             ),
         )
         self.problem_extra: dict[str, Any] = {"limit": limit}
+
+
+class VoiceAtCapacityException(HTTPException):
+    """
+    429. The one Anam session is in use — by anyone, anywhere in the product.
+
+    Its own type because the SPA's answer is a COOLDOWN plus a nudge toward
+    Chat, not the "you've used all your generations for today" copy that
+    ErrorToast renders for the generic 429. On the free tier this is the
+    ordinary second-user path, not an incident.
+
+    The free tier's "1 concurrent session" is a property of the API KEY, not of
+    a user, so without arbitration the second person in the product to press
+    Talk gets a bare 429 from the vendor with no Retry-After anyone can act on.
+    `retry_after_seconds` here is computed from the live lease, so it is a real
+    number rather than a guess.
+    """
+
+    problem_type = "https://rithm.dev/errors/voice-at-capacity"
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__(
+            status_code=429,
+            detail="Someone else is talking to the assistant right now.",
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+        # Header AND body, for the reason RateLimitExceededException records:
+        # reading a response header from JS needs the server to have listed it
+        # in Access-Control-Expose-Headers, and one missing entry there is a
+        # silent undefined rather than an error.
+        self.problem_extra: dict[str, Any] = {
+            "retry_after_seconds": retry_after_seconds
+        }
+
+
+class VoiceQuotaExceededException(HTTPException):
+    """
+    429. This user's own daily cap on session STARTS (not turns).
+
+    Distinct from VoiceAtCapacity above: nobody else is talking and waiting a
+    minute will not help. The SPA cools Talk down until tomorrow and offers
+    Chat, which has its own, much larger, budget.
+    """
+
+    problem_type = "https://rithm.dev/errors/voice-quota-exceeded"
+
+    def __init__(self, limit: int, retry_after_seconds: int) -> None:
+        super().__init__(
+            status_code=429,
+            detail=(
+                f"You have started {limit} voice sessions in the last 24 hours. "
+                "Keep going in chat, or come back tomorrow."
+            ),
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+        self.problem_extra: dict[str, Any] = {
+            "retry_after_seconds": retry_after_seconds,
+            "limit": limit,
+        }
+
+
+class VoiceUnavailableException(HTTPException):
+    """
+    503. Configured, but the vendor refused, timed out, or answered nonsense.
+
+    Distinct from the 501 below: this one may work in a minute, that one will
+    never work until someone changes a deployment.
+
+    The vendor's own error body is NEVER forwarded. It is a third party's error
+    text about a third party's service, and the SPA has exactly one job with
+    it: fall back to the Lottie.
+    """
+
+    problem_type = "https://rithm.dev/errors/voice-unavailable"
+
+    def __init__(self, retry_after_seconds: int = 30) -> None:
+        super().__init__(
+            status_code=503,
+            detail="Voice could not start just now. You can still chat.",
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+
+
+class VoiceNotConfiguredException(HTTPException):
+    """
+    501, not 404 and not 403.
+
+    The route exists and the caller did nothing wrong — this deployment simply
+    has no Anam key. The SPA reads it as "voice was never here", which is a
+    DIFFERENT panel from "voice failed": the first is today's avatar with Talk
+    opening Coming Soon, the second names a reason and offers a retry.
+    """
+
+    problem_type = "https://rithm.dev/errors/voice-not-configured"
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=501,
+            detail="Voice is not available in this environment.",
+        )
