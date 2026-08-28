@@ -33,7 +33,7 @@ than refuses: this is a draft being repaired, not a request being validated.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Self, cast
+from typing import Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -283,14 +283,19 @@ def draft_is_ready(draft: SongDraft) -> bool:
     reporting a mood, not a fact, and the DraftCard appearing over an empty
     form is the one failure the user cannot recover from without starting over.
 
-    A prompt, a genre, a mood, and a decision about vocals. Length, tempo and
-    instruments all have sensible defaults in the form; those four do not.
+    THREE THINGS: what the song is, its genre, its mood. Nothing else is
+    withheld for, and the bar is deliberately low — the door opening is not the
+    interview ending. Vocals, voice, instruments and length all keep being
+    asked afterwards, one at a time, with the card already on screen; the
+    person answers as many as they feel like and leaves whenever they want.
+
+    Vocals used to be the fourth condition and is not any more. It has a form
+    default like the rest of them (`lyrics_mode ?? "write"`, web/src/lib/chat.ts)
+    and holding the door shut for it cost a whole extra turn for something the
+    Create form asks in a two-option toggle.
     """
     return (
-        draft.prompt is not None
-        and draft.genre is not None
-        and draft.mood is not None
-        and draft.lyrics_mode is not None
+        draft.prompt is not None and draft.genre is not None and draft.mood is not None
     )
 
 
@@ -312,6 +317,17 @@ class ChatTurnRequest(BaseModel):
 
     message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_LENGTH)
 
+    # Which door this turn came through. DEFAULTED, so no client breaks and the
+    # deploy window is safe — an older SPA that knows nothing about voice keeps
+    # posting valid bodies.
+    #
+    # It earns its place twice: it puts `voice=<bool>` on the existing
+    # `chat_turn` log line, which makes "how much of our traffic is voice, and
+    # is it slower?" answerable from CloudWatch; and it is what finally writes
+    # `sessions.voice_enabled`, a column that has existed since the baseline
+    # migration and has never had a writer.
+    source: Literal["chat", "voice"] = "chat"
+
 
 class ChatTurnResponse(BaseModel):
     message: ChatMessageOut
@@ -332,3 +348,31 @@ class ChatSessionResponse(BaseModel):
     messages: list[ChatMessageOut]
     draft: SongDraft
     ready: bool
+    # How the SPA learns voice exists WITHOUT spending the one global Anam slot
+    # to find out. Asking the token route would mint a token and claim the slot
+    # to answer a yes/no question; this GET is already fetched on Home mount
+    # with staleTime: Infinity, so it costs nothing. The 501 from the POST
+    # stays as the backstop for the race where the flag flips between the two
+    # calls.
+    voice_available: bool = False
+
+
+class VoiceSessionResponse(BaseModel):
+    """
+    A one-hour bearer credential for a three-minute session.
+
+    NEVER CACHED AND NEVER LOGGED. The token outlives its usefulness by twenty
+    times, so the SPA fetches it with a plain `request()` and holds it in a ref
+    — putting it in a react-query cache entry would leave it visible in
+    devtools for ten minutes after the call ended. The route sets
+    `Cache-Control: no-store` for the same reason.
+    """
+
+    session_token: str
+    # The SPA's countdown runs off THIS, never off a hardcoded 180. The cap is a
+    # vendor fact, and a client that hardcodes it starts lying the day the plan
+    # changes.
+    expires_in_seconds: int
+    # Returned so DELETE can prove it owns the slot: a stale tab's unload must
+    # not free the lease the user's current tab is holding.
+    lease_id: UUID

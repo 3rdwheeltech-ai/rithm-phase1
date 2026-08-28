@@ -215,15 +215,28 @@ def test_a_merge_re_applies_the_agreement_rules() -> None:
 # ── Readiness ─────────────────────────────────────────────────────────────
 
 
-def test_ready_needs_a_prompt_a_genre_a_mood_and_a_vocals_decision() -> None:
-    complete = {
-        "prompt": "rainy drive",
-        "genre": "Lo-Fi",
-        "mood": "Calm",
-        "lyrics_mode": "instrumental",
-    }
+def test_ready_needs_a_prompt_a_genre_and_a_mood() -> None:
+    complete = {"prompt": "rainy drive", "genre": "Lo-Fi", "mood": "Calm"}
 
     assert draft_is_ready(SongDraft.model_validate(complete)) is True
     for missing in complete:
         partial = {k: v for k, v in complete.items() if k != missing}
         assert draft_is_ready(SongDraft.model_validate(partial)) is False
+
+
+def test_ready_does_not_wait_on_a_vocals_decision() -> None:
+    """
+    Three questions opens the door; the interview carries on through it.
+
+    Vocals was the fourth condition and is not any more — it has a form default
+    like instruments and length do, and holding the DraftCard back for it cost
+    a whole extra turn before anyone could leave.
+    """
+    three = SongDraft.model_validate(
+        {"prompt": "rainy drive", "genre": "Lo-Fi", "mood": "Calm"}
+    )
+
+    assert three.lyrics_mode is None
+    assert draft_is_ready(three) is True
+    # And answering it later does not un-ready the draft.
+    assert draft_is_ready(three.merged_with(SongDraft(lyrics_mode=None))) is True

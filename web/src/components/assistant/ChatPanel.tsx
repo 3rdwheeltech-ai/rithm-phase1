@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../../lib/api";
+import { OPENING_LINE } from "../../lib/chat";
 import { cn } from "../../lib/cn";
 import { useLens } from "../../lib/useLens";
 import { mergeRefs, useSpecular } from "../../lib/useSpecular";
+import { useAssistant } from "../../store/assistant";
 import { EMPTY_DRAFT, useChatSession, useResetChat, useSendChatMessage } from "../../hooks/useChat";
 import {
   ASSISTANT_UNAVAILABLE_TYPE,
@@ -16,9 +18,6 @@ import ChatMessage from "./ChatMessage";
 import Composer from "./Composer";
 import DoorToggle from "./DoorToggle";
 import DraftCard from "./DraftCard";
-
-const OPENING_LINE =
-  "Tell me about the song you want — a scene, a feeling, anything at all.";
 
 /**
  * The conversational door onto Create.
@@ -41,9 +40,27 @@ const OPENING_LINE =
  * This is the ONLY new `.lg-lens` in the feature. index.css names four on
  * screen at once as the ceiling and Home already spends all four; this one
  * takes AvatarPanel's slot. No lens on the DraftCard, the Composer or a bubble.
+ *
+ * `chrome="plain"` IS THE MOBILE SHEET'S VARIANT, and it exists because of
+ * that same budget rather than for taste. Inside `VoiceSheet` this renders on
+ * top of a Home page that is already spending all four lenses — and covering
+ * them does not free them, because they are still in the DOM and still
+ * compositing. So the sheet gets `.surface` and no lens at all, which is what
+ * `DraftCard` does for the same reason.
+ *
+ * A prop rather than a second component: everything else about the two is
+ * identical, and a duplicate chat panel is two things that have to agree about
+ * how a turn folds into the cache.
  */
-export default function ChatPanel({ className = "" }: { className?: string }) {
+export default function ChatPanel({
+  className = "",
+  chrome = "lens",
+}: {
+  className?: string;
+  chrome?: "lens" | "plain";
+}) {
   const nav = useNavigate();
+  const setMode = useAssistant((s) => s.setMode);
 
   const { data: session } = useChatSession();
   const send = useSendChatMessage();
@@ -64,8 +81,11 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
   const ready = session?.ready ?? false;
   const busy = send.isPending;
 
+  // Both hooks are called unconditionally — hooks rules, and they are cheap
+  // no-ops when their ref never lands on an element.
   const lensRef = useLens<HTMLElement>("md", 24);
   const specularRef = useSpecular<HTMLElement>();
+  const lens = chrome === "lens";
 
   // Follow the conversation. `scrollTop` rather than scrollIntoView: the
   // latter walks up to the nearest scrollable ancestor and would move the
@@ -108,7 +128,7 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
 
   function onSend(message: string) {
     setPending(message);
-    send.mutate(message, { onSettled: () => setPending(null) });
+    send.mutate({ message }, { onSettled: () => setPending(null) });
   }
 
   const error = send.error;
@@ -126,10 +146,14 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
 
   return (
     <section
-      ref={mergeRefs(lensRef, specularRef, panelRef)}
+      ref={lens ? mergeRefs(lensRef, specularRef, panelRef) : panelRef}
       aria-label="AI assistant chat"
-      className={cn("lg-lens relative flex flex-col overflow-hidden p-4", className)}
-      style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
+      className={cn(
+        "relative flex flex-col overflow-hidden p-4",
+        lens ? "lg-lens" : "surface rounded-card",
+        className,
+      )}
+      style={lens ? ({ "--r": "24px", "--pad": "16px" } as React.CSSProperties) : undefined}
     >
       <header className="mb-3 flex shrink-0 items-center gap-2">
         <AssistantAvatar variant="chip" className="h-8 w-8" />
@@ -145,11 +169,33 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
         >
           <RotateCcw className="h-4 w-4" strokeWidth={2} />
         </button>
+
+        {/*
+          Leaving is a UI state change and NOTHING else — no DELETE. The
+          transcript is durable, lives on the server, and is exactly what the
+          user expects to find when they come back.
+
+          The same destination as the toggle below, deliberately: the toggle
+          names where it goes and is the discoverable control, this is the
+          two-pixel version for someone who already knows. Sized and styled off
+          the reset button beside it so the header reads as one pair of quiet
+          utilities rather than a control and a decision.
+        */}
+        <button
+          type="button"
+          onClick={() => setMode("talk")}
+          title="Close chat"
+          aria-label="Close chat"
+          className="flex h-7 w-7 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
+        >
+          <X className="h-4 w-4" strokeWidth={2} />
+        </button>
       </header>
 
       {/*
-        The way out, and the way to voice, in one control — an X here would
-        have meant the same thing while naming neither. Same row of the panel
+        The way out, and the way to voice, in one control. The X in the header
+        goes to the same place; this one is here because it SAYS where that is
+        and what is on the other side, which an X cannot. Same row of the panel
         as in AvatarPanel, so switching does not move it.
       */}
       <DoorToggle className="mb-3 flex shrink-0 justify-center" />
@@ -232,15 +278,17 @@ export default function ChatPanel({ className = "" }: { className?: string }) {
       )}
 
       {(session?.messages.length ?? 0) > 0 && !ready && (
-        // Always available, so nobody is held hostage by the server's `ready`
-        // decision. Quiet, because the DraftCard is the door we want them to
-        // take — this one just isn't locked.
+        // The SAME destination as the DraftCard's button, with the same draft —
+        // so it says the same words. Always available, so nobody is held
+        // hostage by the server's `ready` decision; quiet, because before the
+        // core three are answered Create opens on a form with holes in it.
+        // The two are rarely on screen together: `ready` is three answers away.
         <button
           type="button"
           onClick={() => nav("/create", { state: { draft } })}
           className="mt-2 shrink-0 self-end text-2xs text-ink-faint underline-offset-2 transition-colors hover:text-ink-muted hover:underline"
         >
-          Use what we have →
+          Continue in Create →
         </button>
       )}
 

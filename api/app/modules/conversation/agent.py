@@ -146,31 +146,47 @@ HOW YOU TALK
 - If they say they are done, or say "surprise me", accept it and fill in the
   rest yourself with sensible choices. Do not interrogate.
 
-WHAT YOU ARE COLLECTING, in this order
+THE THREE THAT MATTER, in this order
 1. What the song is — a sentence describing the music. Everything else is
    optional next to this.
 2. Genre. It must be one of: {genres}
 3. Mood. It must be one of: {moods}
+
+THE MOMENT YOU HAVE THOSE THREE, the song is ready to open in Create, and you
+say so: one short line telling them it is ready whenever they are — and then
+ask the next question below anyway, in the same message. They choose whether to
+answer it or go. Do not make them ask permission to leave, and do not announce
+it twice.
+
+NICE TO HAVE, one at a time, after that
 4. Sung or instrumental.
 5. If sung: who sings it — a female lead, a male lead, or let RITHM pick.
    Skip this one entirely for an instrumental.
 6. Instruments. One or two that should carry it is plenty.
 7. Length, in seconds ({length_min}-{length_max}).
 
-Ask about all of them, one at a time, and do not stop after four: who sings
-it, the instruments and the length are questions, not extras. A tempo range in
-BPM (20-300) and a title are worth raising only if they bring them up first.
-Once you have the list, say you have everything and stop asking.
+Every one of these can be skipped and none of them is worth a second ask. A
+tempo range in BPM (20-300) and a title are worth raising only if they bring
+them up first. When there is nothing sensible left to ask, say so and stop.
 
 RULES YOU CANNOT BREAK
 - A brush-off is an answer. "Whatever fits", "you pick", "surprise me" — take
   it, say what you'll do, and move to the next question. Never ask the same
   thing twice.
 - Genre and mood must come from the two lists above, exactly. If they say
-  "synthwave", offer the nearest one on the list ("EDM works for that — shall I
-  use it?"); do not invent a genre.
+  "synthwave", TAKE the nearest one on the list, name the one you took, and
+  carry on ("Synthwave — I'll put that down as EDM. What mood are you after?").
+  Never ask them to confirm a mapping you can make yourself, and never invent
+  a genre that is not on the list.
+- If an answer fits a DIFFERENT question than the one you asked, take it for
+  the question it fits and then ask the one that is still open. Someone who
+  answers "EDM" to a question about mood has given you the genre: record it,
+  and ask the mood ONCE more — never twice, and never as a yes/no about the
+  answer they already gave.
 - Never mention JSON, fields, forms, schemas, parameters or "the draft". You
-  are having a conversation, not filling in a record in front of them.
+  are having a conversation, not filling in a record in front of them. "Ready
+  to open in Create" is the one exception — Create is a place they can see, and
+  a button that says exactly that appears when you say it.
 - Never write lyrics unless they ask you to, and if they do, keep it to a few
   lines and say RITHM will write the rest.
 - Never promise a track, a download, or a time.
@@ -263,18 +279,27 @@ RULES
 - Carry forward everything in "known so far" unless this exchange changed it."""
 
 
-def _extract_user_turn(*, draft: SongDraft, user_text: str, reply: str) -> str:
+def _extract_user_turn(*, draft: SongDraft, user_text: str, asked: str) -> str:
+    """
+    The extraction call's one user message.
+
+    `asked` is the QUESTION being answered, not the reply to it — extraction
+    now runs before the interviewer writes anything. That is the better half of
+    the exchange to hand over anyway: "Dark" is a mood next to "what mood are
+    you after?" and almost nothing on its own, and the prior question is what
+    disambiguates a one-word answer.
+    """
     known = json.dumps(draft.model_dump(mode="json"), ensure_ascii=False)
     return "\n".join(
         [
             "Known so far:",
             known,
             "",
+            "The assistant had asked:",
+            asked or "(nothing yet — this is the first message)",
+            "",
             "They said:",
             user_text,
-            "",
-            "The assistant replied:",
-            reply,
             "",
             "JSON:",
         ]
@@ -296,12 +321,12 @@ def _json_block(text: str) -> str | None:
     return text[start : end + 1]
 
 
-async def _extract(*, draft: SongDraft, user_text: str, reply: str) -> SongDraft:
+async def _extract(*, draft: SongDraft, user_text: str, asked: str) -> SongDraft:
     """
     Turn the exchange into a draft delta. Never raises; an empty draft means
     "nothing learned this turn", which is a normal outcome.
 
-    A SECOND call, on a DIFFERENT model, and this is the single most important
+    A SEPARATE call, on a DIFFERENT model, and this is the single most important
     departure from the obvious one-call design. Asking the chat model to append
     a fenced JSON block puts "hold a conversation" and "emit strict JSON" on the
     same model — and the model serving 100% of chat traffic today is
@@ -334,7 +359,7 @@ async def _extract(*, draft: SongDraft, user_text: str, reply: str) -> SongDraft
                         "content": [
                             {
                                 "text": _extract_user_turn(
-                                    draft=draft, user_text=user_text, reply=reply
+                                    draft=draft, user_text=user_text, asked=asked
                                 )
                             }
                         ],
@@ -352,6 +377,12 @@ async def _extract(*, draft: SongDraft, user_text: str, reply: str) -> SongDraft
             reason="timeout",
             model_id=settings.bedrock_extract_model_id,
         )
+        return SongDraft()
+
+    # DISABLED is the default posture rather than a miss — local, CI and every
+    # route test run this way, and warning on each turn would bury the misses
+    # that matter. `converse_messages` makes no call at all in that state.
+    if outcome is ConverseOutcome.DISABLED:
         return SongDraft()
 
     block = _json_block(text) if outcome is ConverseOutcome.OK and text else None
@@ -651,14 +682,14 @@ def _next_step(draft: SongDraft, asked: str = "") -> str | None:
     """
     The first thing still missing. `asked` is the assistant's previous message.
 
-    The first four are what `draft_is_ready` wants, so they are asked until
-    they are answered. The last three are asked ONCE: they are the ones a
-    person is entitled to wave away, and a ladder that waits for a value would
-    put the same question on screen forever.
+    The first THREE are what `draft_is_ready` wants, so they are asked until
+    they are answered. The rest are asked ONCE: they are the ones a person is
+    entitled to wave away, and a ladder that waits for a value would put the
+    same question on screen forever.
 
-    Voice, instruments and length are all asked after the draft is already
-    ready, on purpose — the DraftCard appears while the questions continue, and
-    being able to leave early is the point of "Use what we have".
+    Everything below the line is asked after the draft is already ready, on
+    purpose — the DraftCard appears while the questions continue, and being
+    able to leave early is the whole point of the door being open.
     """
     if draft.prompt is None:
         return "prompt"
@@ -666,18 +697,21 @@ def _next_step(draft: SongDraft, asked: str = "") -> str | None:
         return "genre"
     if draft.mood is None:
         return "mood"
-    if draft.lyrics_mode is None:
-        return "lyrics_mode"
 
     lowered = asked.casefold()
 
     def already_put(step: str) -> bool:
         return any(word in lowered for word in _TOPIC_WORDS[step])
 
+    if draft.lyrics_mode is None and not already_put("lyrics_mode"):
+        return "lyrics_mode"
     # Nothing sings on an instrumental — `_fields_agree` has already forced
-    # voice to AUTO there, so this is skipped rather than answered.
+    # voice to AUTO there, so this is skipped rather than answered. An UNASKED
+    # vocals question lands here too: with `lyrics_mode` still None there is no
+    # sung/instrumental decision to hang a voice on, so it waits its turn.
     if (
-        draft.lyrics_mode is not LyricsMode.INSTRUMENTAL
+        draft.lyrics_mode is not None
+        and draft.lyrics_mode is not LyricsMode.INSTRUMENTAL
         and draft.voice is None
         and not already_put("voice")
     ):
@@ -731,20 +765,38 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     """
     One assistant turn. `history` ends with the user message being answered.
 
-    Two model calls: the chain writes the prose, then nova-micro extracts the
-    draft. With Bedrock switched off — the default, and what local, CI and the
-    tests all run — neither happens and the scripted interviewer answers
-    instead.
+    Two model calls, EXTRACTION FIRST: nova-micro reads this message into the
+    draft, then the chain writes the prose against the draft it just moved.
+    With Bedrock switched off — the default, and what local, CI and the tests
+    all run — neither happens and the scripted interviewer answers instead.
+
+    The order is the fix for an interviewer that asked the same thing twice.
+    Extraction used to run after the reply, which meant `_chat_system` was
+    always built from the draft as it stood BEFORE the message being answered:
+    the model was told "you do not know the mood yet" in the very turn the user
+    named one, and it duly asked again. Nothing is paid for this — the two
+    calls were already sequential, so the budget is the same either way.
+
+    A failed extraction (timeout, malformed JSON) still returns an empty draft
+    and the chain still runs, on the pre-turn draft. That is exactly the old
+    behaviour, and it is the floor rather than the path.
     """
     settings = get_settings()
     user_text = _last_user_text(history)
-    # The question this message is answering. It is what stops the interview
-    # asking a second time for something nobody is going to give it.
+    # The question this message is answering. It disambiguates a one-word reply
+    # for the extractor, and it is what stops the interview asking a second
+    # time for something nobody is going to give it.
     asked = _last_assistant_text(history)
+
+    # A no-op when Bedrock is off — `_extract` reads DISABLED off the transport
+    # the same way `_run_chain` does, and returns an empty draft. The offline
+    # interviewer below parses the message itself.
+    delta = await _extract(draft=draft, user_text=user_text, asked=asked)
+    merged = draft.merged_with(delta)
 
     try:
         outcome, model_id, reply = await asyncio.wait_for(
-            _run_chain(history=history, system=_chat_system(draft)),
+            _run_chain(history=history, system=_chat_system(merged)),
             timeout=settings.bedrock_chat_timeout_seconds,
         )
     except TimeoutError:
@@ -760,6 +812,8 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
         raise AssistantUnavailableException() from None
 
     if outcome is ConverseOutcome.DISABLED:
+        # `merged` is `draft` here — the extraction above was the same no-op,
+        # so the offline parse starts from the untouched draft.
         delta = _offline_delta(user_text=user_text, draft=draft)
         merged = draft.merged_with(delta)
         step = _next_step(merged, asked)
@@ -776,8 +830,6 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
         logger.warning("chat_chain_exhausted", models=len(settings.chat_model_ids))
         raise AssistantUnavailableException()
 
-    delta = await _extract(draft=draft, user_text=user_text, reply=reply)
-    merged = draft.merged_with(delta)
     logger.info(
         "chat_turn_complete",
         model_id=model_id,

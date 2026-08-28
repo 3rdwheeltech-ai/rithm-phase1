@@ -65,11 +65,18 @@ export default function DraftCard({ draft }: { draft: SongDraft }) {
           The handoff. It carries the DRAFT, not a generation — the chatbot
           fills the form and the user presses Create, which is the review step
           and the whole point.
+
+          AMBER, and the only action in the app that is. This card arrives at
+          the bottom of a panel built entirely from teal chrome — a signal-hued
+          button here is one more of the same thing, and the near-opaque
+          `.glass-btn-solid` it used to wear read as a disabled row. Amber is
+          the room's other pole, already in the frame's own conic border, so it
+          pops without leaving the palette.
         */}
         <button
           type="button"
           onClick={() => nav("/create", { state: { draft } })}
-          className="glass-btn glass-btn-solid mt-3 min-h-[40px] w-full rounded-el px-3 text-sm font-semibold"
+          className="glass-btn glass-btn-amber mt-3 min-h-[40px] w-full rounded-el px-3 text-sm font-semibold"
         >
           Open in Create
           <ArrowRight className="ml-1.5 h-4 w-4" strokeWidth={2.5} />

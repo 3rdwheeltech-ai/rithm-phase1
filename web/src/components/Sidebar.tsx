@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Home, Plus, Library, Sparkles, Compass, LogOut, Settings } from "lucide-react";
+import { Home, Plus, Library, Sparkles, Compass, LogOut, Pin, PinOff, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "../lib/cn";
 import { useHoverIntent } from "../lib/useHoverIntent";
 import { useLens } from "../lib/useLens";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
+import { useChrome } from "../store/chrome";
 import ModeToggle from "./ModeToggle";
 
 interface NavItem {
@@ -44,7 +45,13 @@ export default function Sidebar({
   const { hovered, onMouseEnter, onMouseLeave } = useHoverIntent();
   // Keyboard users never fire hover, so tabbing into the rail opens it too.
   const [focusWithin, setFocusWithin] = useState(false);
-  const expanded = hovered || focusWithin;
+  const pinned = useChrome((s) => s.navPinned);
+  const setPinned = useChrome((s) => s.setNavPinned);
+  // Pinning does not replace hover, it outlasts it: the rail still opens under
+  // the pointer, it just stops closing again. And `Layout` reads the same flag
+  // to widen the page's left margin, so pinned it sits BESIDE the content
+  // rather than over it — which is the part hovering cannot give you.
+  const expanded = pinned || hovered || focusWithin;
   const nav = useNavigate();
   const { pathname } = useLocation();
 
@@ -70,11 +77,43 @@ export default function Sidebar({
       style={{ "--r": "24px", "--pad": "12px" } as React.CSSProperties}
     >
       {/* Brand mark — "R" collapsed, "RITHM" on hover */}
-      <div className="mb-6 flex h-9 items-center px-2">
+      <div className="mb-6 flex h-9 items-center justify-between px-2">
         <span className="whitespace-nowrap font-display text-lg font-bold tracking-[0.14em] text-ink">
           R
           <span className={cn("transition-opacity duration-200", reveal)}>ITHM</span>
         </span>
+
+        {/*
+          Fades with the rail like every other label here, rather than being a
+          control on a 64px stub.
+
+          STILL FOCUSABLE while faded, deliberately. It is the first tab stop
+          in the rail, and tabbing to it sets `focusWithin`, which opens the
+          rail and reveals it — so it is never focused-but-invisible. Taking it
+          out of the tab order instead would put it BEFORE the nav in the DOM
+          and behind it in the tab order, reachable only by shift-tabbing back.
+          `pointer-events-none` is what keeps an invisible target off the 64px
+          stub, where it would sit over the wordmark.
+        */}
+        <button
+          type="button"
+          onClick={() => setPinned(!pinned)}
+          aria-pressed={pinned}
+          title={pinned ? "Unpin menu" : "Pin menu"}
+          aria-label={pinned ? "Unpin menu" : "Pin menu"}
+          className={cn(
+            "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-control transition-all duration-200 hover:bg-white/[0.06] hover:text-ink",
+            pinned ? "text-ink-muted" : "text-ink-faint",
+            !expanded && "pointer-events-none",
+            reveal,
+          )}
+        >
+          {pinned ? (
+            <PinOff className="h-[17px] w-[17px]" strokeWidth={1.75} />
+          ) : (
+            <Pin className="h-[17px] w-[17px]" strokeWidth={1.75} />
+          )}
+        </button>
       </div>
 
       {/* Nav */}

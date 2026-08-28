@@ -1,7 +1,8 @@
 {
   "_comment": [
     "ECS task definition for rithm-api. Replace <ACCOUNT>, <SECRET_RDS_ARN>,",
-    "<SECRET_APP_ARN>, <SHA>, <JOBS_QUEUE_URL>, <TOPIC_ARN>, <ASSETS_BUCKET>",
+    "<SECRET_APP_ARN>, <SHA>, <JOBS_QUEUE_URL>, <TOPIC_ARN>, <ASSETS_BUCKET>,",
+    "<ANAM_VOICE_ID>",
     "and <ESTIMATED_COLD_START_SECONDS> before registering.",
     "",
     "THREE THINGS THAT WILL BITE, in the order they will bite you:",
@@ -57,6 +58,30 @@
     "   Chat extraction runs on BEDROCK_TITLE_MODEL_ID\u0027s model",
     "   (amazon.nova-micro-v1:0), which is already granted and enabled -- so",
     "   the chat feature needs NO new model access and NO IAM change.",
+    "",
+    "7. ANAM_LLM_ID must be CUSTOMER_CLIENT_V1, and it is not a model id. It is",
+    "   the value that turns Anam\u0027s OWN brain off and leaves speech-to-text",
+    "   and text-to-speech on, so that RITHM\u0027s interviewer keeps answering.",
+    "   With anything else there the avatar answers with its own model and the",
+    "   failure is SILENT: the reply never reaches /chat/messages, the draft",
+    "   never moves, and the Chat door shows a transcript with a hole in it.",
+    "   main.py refuses to start rather than let that ship -- so the symptom is",
+    "   a deployment that never stabilises, the same trade SSE_TOKEN_SECRET",
+    "   makes above. ANAM_VOICE_ID is guarded the same way: it has no default,",
+    "   because an avatar with the wrong voice is worse than no avatar.",
+    "",
+    "   ANAM_ENABLED absent or false is not a failure and is the state every",
+    "   environment starts in: the AI Assistant panel is bit-for-bit what it",
+    "   was before voice existed, and Talk opens the Coming Soon dialog.",
+    "   TURN IT ON LAST, as its own revision -- then turning voice off again is",
+    "   one more revision rather than a rollback.",
+    "",
+    "   ONE KEY IS ONE CONCURRENT SESSION on the free tier, product-wide. If",
+    "   dev and prod share it, a developer running `npm run dev` locks",
+    "   production out for three minutes and the person on the other end reads",
+    "   \u0027someone else is talking\u0027 with no idea it was a colleague. Use a",
+    "   second Anam account for non-prod, or keep ANAM_ENABLED false outside",
+    "   prod. Not deciding is the same as choosing the first failure.",
     "",
     "desiredCount stays at 1: SSE pub/sub is in-process, and a second task",
     "silently loses completion events for streams it does not own.",
@@ -115,7 +140,13 @@
         {
           "name": "ESTIMATED_COLD_START_SECONDS",
           "value": "<ESTIMATED_COLD_START_SECONDS>"
-        }
+        },
+        { "name": "ANAM_ENABLED", "value": "false" },
+        { "name": "ANAM_LLM_ID", "value": "CUSTOMER_CLIENT_V1" },
+        { "name": "ANAM_VOICE_ID", "value": "<ANAM_VOICE_ID>" },
+        { "name": "ANAM_AVATAR_ID", "value": "3fff7cca-95a6-4980-b478-43488becdfaf" },
+        { "name": "ANAM_SESSION_SECONDS", "value": "180" },
+        { "name": "ANAM_MAX_SESSIONS_PER_USER_PER_DAY", "value": "10" }
       ],
       "_comment_dev_endpoints": [
         "RITHM_DEV_ENDPOINTS is deliberately ABSENT, not set to '0'.",
@@ -154,6 +185,10 @@
         {
           "name": "SSE_TOKEN_SECRET",
           "valueFrom": "<SECRET_APP_ARN>:sse_signing_key::"
+        },
+        {
+          "name": "ANAM_API_KEY",
+          "valueFrom": "<SECRET_APP_ARN>:anam_api_key::"
         }
       ],
       "healthCheck": {

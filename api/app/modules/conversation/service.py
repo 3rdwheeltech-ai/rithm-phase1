@@ -143,7 +143,12 @@ class ConversationService:
         return existing
 
     async def save_draft(
-        self, *, session_id: UUID, draft: dict[str, Any], ready: bool
+        self,
+        *,
+        session_id: UUID,
+        draft: dict[str, Any],
+        ready: bool,
+        voice: bool = False,
     ) -> None:
         """
         Persist the merged draft and drive `current_state` with it.
@@ -151,6 +156,15 @@ class ConversationService:
         READY_TO_EXPORT gates the DraftCard, so the column is real state rather
         than decoration — and it can go back to DESCRIBING, because a user who
         says "actually make it instrumental, no — sung" can un-complete a draft.
+
+        `voice` finally gives `sessions.voice_enabled` a writer. That column has
+        existed since 0001_conversation_baseline and — confirmed by grep — has
+        never been written by anything, so no DDL is needed here. It rides on
+        the UPDATE that was already happening rather than costing a second
+        round trip, and it is STICKY: `OR :voice` rather than `= :voice`,
+        because a conversation held half by voice and half by typing was still
+        a voice conversation, and the Chat door writing the flag back to false
+        would erase that.
         """
         state = (
             SessionState.READY_TO_EXPORT.value
@@ -161,13 +175,15 @@ class ConversationService:
             await session.execute(
                 text(
                     f"UPDATE {SESSIONS_TABLE} "  # noqa: S608 — constants
-                    "SET draft = CAST(:draft AS JSONB), current_state = :state "
+                    "SET draft = CAST(:draft AS JSONB), current_state = :state, "
+                    "    voice_enabled = voice_enabled OR :voice "
                     "WHERE id = CAST(:id AS uuid)"
                 ),
                 {
                     "id": str(session_id),
                     "draft": json.dumps(draft),
                     "state": state,
+                    "voice": voice,
                 },
             )
 

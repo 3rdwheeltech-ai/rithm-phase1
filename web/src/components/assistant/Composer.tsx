@@ -35,6 +35,15 @@ export default function Composer({
     el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
   }, [value]);
 
+  // The box is the only thing to do in this panel, so it holds the caret: on
+  // open, and again the moment a turn lands. `disabled={busy}` blurs it
+  // mid-turn, and this runs after the commit that re-enables it — so the next
+  // answer can be typed without first aiming at the box. `busy` is false at
+  // mount, which is what covers opening the panel.
+  useEffect(() => {
+    if (!busy) ref.current?.focus();
+  }, [busy]);
+
   const canSend = value.trim().length > 0 && !busy;
 
   function send() {

@@ -26,5 +26,37 @@ export default defineConfig({
     // Maps go to Sentry, not into the public bundle (deploy-web.yml excludes
     // them from the sync as a second line of defence).
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        /*
+          RENAME THE SDK'S CHUNK. Do not move it.
+
+          Vite already splits `@anam-ai/js-sdk` out on its own, because
+          `lib/anam/session.ts` is the single place that imports it and does so
+          dynamically — that part needs no help. What it does NOT do is name
+          the chunk usefully: the package's entry file is `index.js`, so the
+          emitted chunk is `index-<hash>.js`, indistinguishable at a glance
+          from the app's own entry chunk. That defeats the release check that
+          voice was kept out of the entry:
+
+            grep -c anam dist/assets/index-*.js   # expect 0
+            ls dist/assets | grep -i anam         # expect exactly one chunk
+
+          `chunkFileNames` renames; `manualChunks` would RESHAPE. The
+          distinction is not pedantic — it was tried, and forcing the package
+          into a named group pulled a shared Rollup interop helper in with it,
+          which left the ENTRY chunk carrying a static
+          `import ... from "./anam-*.js"`. The SDK would then have loaded on
+          every page view: precisely the thing the dynamic import exists to
+          prevent, arrived at by trying to label it.
+        */
+        chunkFileNames: (chunk) =>
+          // `moduleIds`, not `modules`: names are resolved before `modules` is
+          // populated, and reading it there throws during the render pass.
+          chunk.moduleIds.some((id) => id.includes("@anam-ai/js-sdk"))
+            ? "assets/anam-[hash].js"
+            : "assets/[name]-[hash].js",
+      },
+    },
   },
 });

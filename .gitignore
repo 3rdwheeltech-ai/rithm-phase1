@@ -38,6 +38,8 @@ test-results/
 docs/FrontendReferences/
 docs/local-misc/
 docs/others/terminal-progress-misc.md
+# Contains a live Anam API key in plaintext — see the avatar plan §0.1.
+docs/others/Avatar-integration-doc.md
 docs/InitialSetup/RITHM_Phase1_DesignDoc-2.md
 .env.rds
 .env.rds.admin

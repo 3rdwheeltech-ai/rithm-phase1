@@ -42,6 +42,19 @@ export function useChatSession() {
 }
 
 /**
+ * One turn's input.
+ *
+ * An object rather than a bare string, because a voice turn and a typed turn
+ * are the same request with one field different — and the alternative, a
+ * second mutation hook, is two things that must agree about how to fold a
+ * response into the cache.
+ */
+export interface ChatTurnInput {
+  message: string;
+  source?: "chat" | "voice";
+}
+
+/**
  * Send one turn.
  *
  * The response IS the new state — it carries the assistant's message, the
@@ -54,12 +67,22 @@ export function useSendChatMessage() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (message: string) =>
+    /*
+      `source` says which door this came through: "chat" from the composer,
+      "voice" from the turn loop. It is defaulted on the server, so this is
+      additive and an older API answers a body carrying it perfectly happily.
+
+      NEVER ADD A RETRY TO THIS PATH. `/chat/messages` has no idempotency key,
+      so a retried timeout that actually succeeded duplicates the transcript —
+      and the QueryClient's `mutations: { retry: false }` is what stands
+      between voice and exactly that.
+    */
+    mutationFn: ({ message, source = "chat" }: ChatTurnInput) =>
       request<ChatTurnResponse>("/chat/messages", {
         method: "POST",
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, source }),
       }),
-    onSuccess: (turn, message) => {
+    onSuccess: (turn, { message }) => {
       queryClient.setQueryData<ChatSessionResponse>(qk.chat, (previous) => {
         const base: ChatSessionResponse = previous ?? {
           session_id: null,
@@ -98,12 +121,16 @@ export function useResetChat() {
   return useMutation({
     mutationFn: () => request<void>("/chat/session", { method: "DELETE" }),
     onSuccess: () => {
-      queryClient.setQueryData<ChatSessionResponse>(qk.chat, {
+      queryClient.setQueryData<ChatSessionResponse>(qk.chat, (previous) => ({
         session_id: null,
         messages: [],
         draft: EMPTY_DRAFT,
         ready: false,
-      });
+        // Carried across the reset. "Start over" clears a CONVERSATION; it does
+        // not change whether this deployment has an avatar, and dropping the
+        // flag here would hide Talk until the next page load.
+        voice_available: previous?.voice_available ?? false,
+      }));
     },
   });
 }

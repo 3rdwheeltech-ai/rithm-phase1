@@ -1,5 +1,6 @@
 import QuickGenerate from "../components/QuickGenerate";
 import RecentCreations from "../components/RecentCreations";
+import VoiceCard from "../components/assistant/VoiceCard";
 
 export default function Home() {
   return (
@@ -13,6 +14,13 @@ export default function Home() {
         </p>
 
         <QuickGenerate />
+        {/*
+          The assistant's only entry point below `lg`, where the right-hand
+          rail — and with it AvatarPanel — does not exist. `lg:hidden` rather
+          than a breakpoint check in JS, so it costs nothing on desktop and
+          cannot disagree with `Layout`'s own variant.
+        */}
+        <VoiceCard className="lg:hidden" />
         <RecentCreations />
       </div>
     </div>

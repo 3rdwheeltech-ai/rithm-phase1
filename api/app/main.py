@@ -34,6 +34,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "SSE_TOKEN_SECRET is the public default in prod — refusing to start"
         )
 
+    # THE MOST IMPORTANT DEFENSIVE LINE IN THE VOICE FEATURE, because the
+    # failure it prevents is SILENT. CUSTOMER_CLIENT_V1 is what turns Anam's own
+    # brain off and leaves speech-to-text and text-to-speech on. With anything
+    # else there, the avatar answers with its own model: the reply never reaches
+    # /chat/messages, the draft never moves, and the Chat door shows a
+    # transcript with a hole in it. No error, no 500, no alarm — just an empty
+    # DraftCard six turns into a conversation that felt fine.
+    #
+    # The same trade the SSE-secret check above makes: convert an invisible
+    # wrong answer into a deployment that never stabilises. `extra="ignore"` on
+    # Settings is what makes it necessary — a misspelled env var falls back to
+    # the default rather than erroring.
+    if settings.anam_enabled and settings.anam_llm_id != "CUSTOMER_CLIENT_V1":
+        raise RuntimeError(
+            "ANAM_LLM_ID is not CUSTOMER_CLIENT_V1. The avatar would answer "
+            "with its own model: the reply never reaches /chat/messages, the "
+            "draft never moves, and the Chat door shows a transcript with a "
+            "hole in it. Refusing to start."
+        )
+
+    # An avatar with the wrong voice is worse than no avatar, and there is no
+    # sensible default to fall back to — the voice id is an account-specific
+    # value recovered from GET /v1/voices. Refuse rather than paper over it.
+    if settings.anam_enabled and not settings.anam_voice_id:
+        raise RuntimeError(
+            "ANAM_ENABLED is set but ANAM_VOICE_ID is empty — refusing to start"
+        )
+
     init_db_engines()
 
     # ── Stuck-job sweeper ──────────────────────────────────────

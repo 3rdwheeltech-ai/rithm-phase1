@@ -121,6 +121,53 @@ class Settings(BaseSettings):
     chat_max_messages_per_session: int = 60  # then 409 — start a new session
     chat_max_messages_per_day: int = 200  # then 429 — the spend cap
 
+    # ── Anam (voice avatar) ─────────────────────────────────────────────────
+    # Off by default, exactly like bedrock_enabled: local, CI and any
+    # environment that has not been given a key get today's Lottie avatar and a
+    # Talk button that opens Coming Soon, with no branch on `environment`
+    # anywhere.
+    anam_enabled: bool = False
+    anam_api_key: SecretStr = SecretStr("")
+    anam_api_base: str = "https://api.anam.ai/v1"
+
+    # The persona, passed as personaConfig at mint time rather than referenced
+    # by personaId — see conversation/anam.py. avatar_id is Flowerva.
+    anam_avatar_id: str = "3fff7cca-95a6-4980-b478-43488becdfaf"
+    anam_avatar_model: str = "cara-4"
+    # ← MUST be filled before anam_enabled can be True. There is deliberately no
+    # default: an avatar with the wrong voice is worse than no avatar, so an
+    # empty value refuses (see main.py's lifespan guard) rather than papering
+    # over it. Recover the id with:
+    #   curl -s "https://api.anam.ai/v1/voices?perPage=100&search=Tara" \
+    #     -H "Authorization: Bearer $ANAM_API_KEY" | jq '.data[] | {id, name}'
+    anam_voice_id: str = ""
+    anam_persona_name: str = "Rithm"
+
+    # The magic value that turns Anam's own brain OFF and leaves STT + TTS on.
+    # NOT a model id. Anam's LLM answering instead of ours is a SILENT failure:
+    # the reply never reaches /chat/messages, the draft never moves, and the
+    # Chat door shows a transcript with a hole in it. main.py refuses to boot
+    # if this is anything else.
+    anam_llm_id: str = "CUSTOMER_CLIENT_V1"
+
+    # The FREE tier's shape, as settings rather than as magic numbers. The SPA's
+    # countdown runs off what the API returns, so changing the plan is a
+    # task-definition edit and not a frontend release.
+    anam_session_seconds: int = 180
+    # The lease is ADVISORY toward Anam (conversation/lease.py), so its TTL must
+    # exceed the session cap — a client that overruns must still be holding a
+    # lease when it does.
+    anam_lease_slack_seconds: int = 15
+    # A cap on session STARTS, not turns. Stops one user churning start/stop
+    # through a 30-minute monthly budget.
+    anam_max_sessions_per_user_per_day: int = 10
+
+    # One outbound call, no retry. Deliberately well under the SPA's patience: a
+    # slow mint should fail to the Lottie, not hang on a black box. A retry here
+    # would also be actively wrong — the failure this call actually has is
+    # CAPACITY, which retrying makes worse.
+    anam_token_timeout_seconds: float = 8.0
+
     # Operational knobs
     log_level: str = "INFO"
     # 1800, not 300. A cold start is minutes and a 5-minute token is shorter

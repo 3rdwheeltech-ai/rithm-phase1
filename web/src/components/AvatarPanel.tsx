@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useChatSession } from "../hooks/useChat";
+import { useVoiceSession } from "../hooks/useVoiceSession";
 import { useLens } from "../lib/useLens";
 import { usePrefersReducedMotion } from "../lib/useReducedMotion";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
@@ -8,6 +9,8 @@ import AssistantAvatar from "./AssistantAvatar";
 import ComingSoonDialog from "./ComingSoonDialog";
 import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "./SpecularButton";
 import DoorToggle from "./assistant/DoorToggle";
+import VoiceStage from "./assistant/VoiceStage";
+import { voiceFailureCopy } from "./assistant/voiceCopy";
 
 // Prompts the assistant "streams" letter-by-letter, cycling on a loop.
 const PROMPTS = [
@@ -105,11 +108,23 @@ export function StreamingPrompt({ enabled }: { enabled: boolean }) {
  *
  * TALK IS THE PAGE'S PRIMARY ACTION HERE, so it gets the `SpecularButton` that
  * Create and Generate get — the same lit rim, the same size, the same weight in
- * the eye. Voice itself is cut (STT, TTS and an upload route are a feature of
- * their own), so pressing it opens a ComingSoonDialog: the treatment AiTools,
- * Discover and ModeToggle give every unbuilt feature. What it must not be is
- * the quiet secondary button it was, sitting next to a Chat that worked — that
- * read as voice being the lesser half rather than the unfinished one.
+ * the eye. What it must not be is the quiet secondary button it was, sitting
+ * next to a Chat that worked — that read as voice being the lesser half rather
+ * than the unfinished one.
+ *
+ * TWO FAILURE FAMILIES, TREATED DIFFERENTLY ON PURPOSE:
+ *
+ * - Voice was never available here (`voice_available: false`, no WebRTC, no
+ *   getUserMedia). The panel is BIT-FOR-BIT what shipped before voice existed:
+ *   Lottie, `StreamingPrompt`, and Talk opening `ComingSoonDialog`. That is
+ *   why `ComingSoonDialog` stays live code with a live test rather than being
+ *   deleted, and it is the state every environment without an Anam key is in.
+ * - Voice exists and this attempt failed. Lottie, one quiet line naming why,
+ *   and Talk still a real control that retries once its cooldown passes.
+ *
+ * Neither touches the conversation, because the conversation is on the server.
+ * The panel, the `DoorToggle` and the single `.lg-lens` never move: the voice
+ * stage occupies the same box the avatar does.
  *
  * `src` is reserved for swapping in a different portrait image later (it takes
  * precedence over the Lottie when provided).
@@ -123,7 +138,13 @@ export default function AvatarPanel({
 }) {
   const reduceMotion = usePrefersReducedMotion();
   const setMode = useAssistant((s) => s.setMode);
+  const resumed = useAssistant((s) => s.resumed);
+  const markResumed = useAssistant((s) => s.markResumed);
+  const voiceStatus = useAssistant((s) => s.voiceStatus);
+  const voiceFailure = useAssistant((s) => s.voiceFailure);
   const [comingSoon, setComingSoon] = useState<string | null>(null);
+
+  const voice = useVoiceSession();
 
   /**
    * Resume a live conversation on a reload.
@@ -136,21 +157,71 @@ export default function AvatarPanel({
    * turn a Home-only feature into a request per page.
    *
    * ChatPanel reads the same cache entry, so opening costs no second request.
+   *
+   * ONCE PER PAGE LOAD, not once per mount — `resumed` is the whole reason
+   * that flag exists. Leaving chat remounts this panel with the transcript
+   * still sitting in the query cache, so an ungated restore would bounce the
+   * user back into the conversation they had just closed, and both ways out
+   * (the toggle and ChatPanel's X) would be dead controls.
    */
   const { data: session } = useChatSession();
   const hasTranscript = (session?.messages.length ?? 0) > 0;
   useEffect(() => {
-    if (hasTranscript) setMode("chat");
-  }, [hasTranscript, setMode]);
+    if (!hasTranscript || resumed) return;
+    markResumed();
+    setMode("chat");
+  }, [hasTranscript, resumed, markResumed, setMode]);
 
   // Matches the Player it stacks above, so the two read as one column of glass
   // rather than two different materials.
   const lensRef = useLens<HTMLElement>("md", 24);
   const specularRef = useSpecular<HTMLElement>();
 
+  /*
+    THREE QUESTIONS, NOT ONE, because §4.1 answers them differently.
+
+    `voiceConfigured` — does this deployment have an avatar at all? It rides on
+    the session GET this panel has already fetched for the resume check above,
+    so discovery costs no extra request and does not spend the product's one
+    global Anam slot to answer a yes/no. False means voice was NEVER HERE, and
+    the panel is bit-for-bit what shipped before it existed: Talk opens the
+    Coming Soon dialog. `not-configured` is folded in as the backstop for the
+    race where the server flag flips between the GET and the POST.
+
+    `voice.supported` — can this browser do WebRTC and getUserMedia? Checked
+    HERE rather than discovered by failing: never mint a token, and never take
+    the global slot, to learn something `window` already knows. Voice exists,
+    so Talk is a real control that is DISABLED and says why — not a Coming Soon
+    dialog, which would be a lie about the product.
+
+    `voice.canStart` — is a cooldown running? Same treatment: disabled, with a
+    reason.
+  */
+  const voiceConfigured =
+    (session?.voice_available ?? false) && voiceFailure !== "not-configured";
+
+  // The stage replaces the avatar the moment anything is happening, so
+  // "Connecting…" lands on the surface it is about rather than under it.
+  const onStage =
+    voiceConfigured && voiceStatus !== "idle" && voiceStatus !== "unavailable";
+
+  const failureLine = voiceConfigured ? voiceFailureCopy(voiceFailure) : null;
+
+  const talkTitle = !voiceConfigured
+    ? undefined
+    : !voice.supported
+      ? "This browser can't do voice"
+      : !voice.canStart
+        ? "Give it a moment before trying again"
+        : undefined;
+
   return (
     <section
       ref={mergeRefs(lensRef, specularRef)}
+      // Named, like ChatPanel beside it. A `<section>` only becomes a landmark
+      // once it has an accessible name, and the two doors should be the same
+      // shape to assistive tech as they are to the eye.
+      aria-label="AI assistant"
       className={`lg-lens relative flex flex-col items-center overflow-hidden p-4 ${className}`}
       style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
     >
@@ -161,41 +232,88 @@ export default function AvatarPanel({
       {/* Same row of the panel as in ChatPanel — see DoorToggle. */}
       <DoorToggle className="mb-3 flex w-full shrink-0 justify-center" />
 
-      <AssistantAvatar src={src} />
-
-      {/* Streaming assistant prompts, just below the avatar */}
-      <StreamingPrompt enabled={!reduceMotion} />
-
       {/*
-        The same control as Create's Create and Home's Generate, with the same
-        props: this is the primary action of the panel it sits in, and three
-        primary actions that look like three different things is how an app
-        stops reading as one app.
+        ONE OR THE OTHER, IN THE SAME BOX. `VoiceStage`'s video is the same
+        `aspect-square w-full` the Lottie is, so this swap changes no geometry
+        and `useLens`'s ResizeObserver never fires. `AssistantAvatar` itself is
+        not modified by the voice work at all — the fallback is today's avatar,
+        never a third thing and never an error screen.
       */}
-      <div className="mt-4 flex w-full justify-center">
-        <SpecularButton
-          size="lg"
-          radius={16}
-          tint="#ffffff"
-          tintOpacity={0}
-          blur={5}
-          textColor="#f5f5f5"
-          lineColor={SPECULAR_LINE}
-          baseColor={SPECULAR_BASE}
-          intensity={2.5}
-          shineSize={39}
-          shineFade={32}
-          thickness={2}
-          speed={1.3}
-          followMouse={false}
-          proximity={140}
-          autoAnimate={false}
-          onClick={() => setComingSoon("Voice chat")}
-          className="w-full max-w-[240px]"
-        >
-          Talk
-        </SpecularButton>
-      </div>
+      {onStage ? (
+        <VoiceStage
+          ref={voice.videoRef}
+          captions={voice.captions}
+          pendingTranscript={voice.pendingTranscript}
+          suggestions={voice.suggestions}
+          onSuggestion={voice.answerSuggestion}
+          onEnd={voice.end}
+          onGesture={voice.retryGesture}
+          className="w-full"
+        />
+      ) : (
+        <>
+          <AssistantAvatar src={src} />
+
+          {/* Streaming assistant prompts, just below the avatar */}
+          <StreamingPrompt enabled={!reduceMotion} />
+
+          {failureLine !== null && (
+            <p
+              role="status"
+              className="mt-2 px-2 text-center text-2xs leading-snug text-amber"
+            >
+              {failureLine}
+            </p>
+          )}
+
+          {/*
+            The same control as Create's Create and Home's Generate, with the
+            same props: this is the primary action of the panel it sits in, and
+            three primary actions that look like three different things is how
+            an app stops reading as one app.
+
+            What it DOES depends on one server-supplied flag. With voice
+            configured it starts a session; without it, it opens the same
+            Coming Soon dialog it has always opened — which is what keeps this
+            panel bit-for-bit unchanged in every environment without a key.
+          */}
+          <div className="mt-4 flex w-full justify-center">
+            <SpecularButton
+              size="lg"
+              radius={16}
+              tint="#ffffff"
+              tintOpacity={0}
+              blur={5}
+              textColor="#f5f5f5"
+              lineColor={SPECULAR_LINE}
+              baseColor={SPECULAR_BASE}
+              intensity={2.5}
+              shineSize={39}
+              shineFade={32}
+              thickness={2}
+              speed={1.3}
+              followMouse={false}
+              proximity={140}
+              autoAnimate={false}
+              disabled={voiceConfigured && !voice.canStart}
+              title={talkTitle}
+              onClick={() => {
+                if (!voiceConfigured) {
+                  setComingSoon("Voice chat");
+                  return;
+                }
+                // Straight through, with NO await before it: the first two
+                // statements inside `start` have to run while the browser
+                // still considers this a user gesture.
+                voice.start();
+              }}
+              className="w-full max-w-[240px]"
+            >
+              Talk
+            </SpecularButton>
+          </div>
+        </>
+      )}
 
       {/* Portalled, so the `backdrop-filter` on this panel cannot become its
           containing block and trap a `fixed` overlay inside the card. */}

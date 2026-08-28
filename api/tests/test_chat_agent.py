@@ -116,7 +116,9 @@ async def test_the_chain_advances_past_refusals_to_the_model_that_answers(
     result = await agent.run_turn(history=_history(), draft=SongDraft())
 
     assert result.reply == "What's the mood?"
-    assert fake.model_ids[:3] == [HAIKU, GEMMA, NOVA]
+    # The extractor goes FIRST — the interviewer has to be told what this very
+    # message just established, or it asks for it again.
+    assert fake.model_ids == [EXTRACTOR, HAIKU, GEMMA, NOVA]
 
 
 @pytest.mark.asyncio
@@ -131,8 +133,8 @@ async def test_the_winning_model_is_memoised_for_the_process(
     first_turn_calls = len(fake.calls)
     await agent.run_turn(history=_history(), draft=SongDraft())
 
-    # Second turn: straight to the winner, then the extractor. No re-probing.
-    assert fake.model_ids[first_turn_calls:] == [NOVA, EXTRACTOR]
+    # Second turn: the extractor, then straight to the winner. No re-probing.
+    assert fake.model_ids[first_turn_calls:] == [EXTRACTOR, NOVA]
 
 
 @pytest.mark.asyncio
@@ -147,6 +149,9 @@ async def test_a_timeout_ends_the_chain_rather_than_advancing_it(
     more chance at a chat reply.
     """
     monkeypatch.setenv("BEDROCK_CHAT_TIMEOUT_SECONDS", "0.05")
+    # The extractor runs first now and would otherwise hold this test open for
+    # its own full budget before the chain it is about ever starts.
+    monkeypatch.setenv("BEDROCK_EXTRACT_TIMEOUT_SECONDS", "0.05")
     get_settings.cache_clear()
 
     calls: list[str] = []
@@ -162,7 +167,7 @@ async def test_a_timeout_ends_the_chain_rather_than_advancing_it(
         await agent.run_turn(history=_history(), draft=SongDraft())
 
     assert getattr(excinfo.value, "status_code", None) == 503
-    assert calls == [HAIKU]  # stopped, did not advance
+    assert calls == [EXTRACTOR, HAIKU]  # stopped, did not advance
 
 
 @pytest.mark.asyncio
@@ -203,6 +208,74 @@ async def test_extraction_runs_on_the_extractor_at_temperature_zero(
     assert prose["temperature"] == 0.7
     assert extract["temperature"] == 0.0
     assert extract["model_id"] != prose["model_id"]
+
+
+@pytest.mark.asyncio
+async def test_the_interviewer_is_told_what_this_very_message_established(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    THE FIX FOR THE QUESTION ASKED TWICE.
+
+    Extraction runs BEFORE the chain, so `_chat_system` is built from the draft
+    this turn just moved. The other order — which is what shipped first — told
+    the model "you do not know the mood yet" in the same turn the user named
+    one, and it duly asked for the mood again.
+    """
+    fake = FakeConverse(
+        {NOVA: "Lovely.", EXTRACTOR: _extraction(mood="Dark", genre="EDM")}
+    )
+    monkeypatch.setattr(agent, "converse_messages", fake)
+
+    await agent.run_turn(
+        history=_answering("What mood are you after?", "EDM, dark"),
+        draft=SongDraft.model_validate({"prompt": "a rainy drive"}),
+    )
+
+    prose = str(next(c for c in fake.calls if c["model_id"] == NOVA)["system"])
+    assert "- Mood: Dark" in prose
+    assert "- Genre: EDM" in prose
+
+
+@pytest.mark.asyncio
+async def test_the_extractor_is_given_the_question_not_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    "Dark" is a mood next to "what mood are you after?" and almost nothing on
+    its own. The prior question is what disambiguates a one-word answer — and
+    it is the only half of the exchange that exists yet, since the reply has
+    not been written when this call is made.
+    """
+    fake = FakeConverse({NOVA: "Noted.", EXTRACTOR: _extraction(mood="Dark")})
+    monkeypatch.setattr(agent, "converse_messages", fake)
+
+    await agent.run_turn(
+        history=_answering("What mood are you after?", "Dark"), draft=SongDraft()
+    )
+
+    extract = next(c for c in fake.calls if c["model_id"] == EXTRACTOR)
+    sent = str(extract["messages"][0]["content"][0]["text"])
+    assert "What mood are you after?" in sent
+    assert "Noted." not in sent
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_tells_the_model_to_take_a_near_miss_rather_than_confirm_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The old wording carried "shall I use it?" as its own example, which is
+    exactly the extra turn this was meant to avoid.
+    """
+    fake = FakeConverse({NOVA: "Ok.", EXTRACTOR: _extraction()})
+    monkeypatch.setattr(agent, "converse_messages", fake)
+
+    await agent.run_turn(history=_history(), draft=SongDraft())
+
+    prose = str(next(c for c in fake.calls if c["model_id"] == NOVA)["system"])
+    assert "Never ask them to confirm a mapping you can make yourself" in prose
+    assert "shall I use it?" not in prose
 
 
 @pytest.mark.asyncio
@@ -355,7 +428,9 @@ async def test_bedrock_disabled_routes_to_the_offline_interviewer(
     all run. A naive port gives them a chatbot that says "assistant
     unavailable" forever and no way to build the UI without AWS credentials.
     """
-    fake = FakeConverse({model: ConverseOutcome.DISABLED for model in (HAIKU,)})
+    fake = FakeConverse(
+        {model: ConverseOutcome.DISABLED for model in (EXTRACTOR, HAIKU)}
+    )
     monkeypatch.setattr(agent, "converse_messages", fake)
 
     result = await agent.run_turn(history=_history("a rainy drive"), draft=SongDraft())
@@ -363,9 +438,10 @@ async def test_bedrock_disabled_routes_to_the_offline_interviewer(
     assert result.offline is True
     assert result.reply
     assert result.draft.prompt == "a rainy drive"
-    # One call, and no extraction: DISABLED is a property of the process, not
-    # of a model id, so asking the other two is three identical answers.
-    assert fake.model_ids == [HAIKU]
+    # DISABLED is a property of the process, not of a model id: the extractor
+    # learns that and returns nothing, and the chain stops at the first model
+    # rather than asking the other two for the same answer.
+    assert fake.model_ids == [EXTRACTOR, HAIKU]
 
 
 @pytest.mark.asyncio
@@ -448,6 +524,59 @@ async def test_the_interview_does_not_stop_at_ready(
     )
     assert done.draft.length_seconds == 120
     assert done.suggestions == []
+
+
+@pytest.mark.asyncio
+async def test_the_door_opens_after_three_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Three questions — what the song is, its genre, its mood — and the DraftCard
+    is on screen. Vocals used to be a fourth gate; it is now the first of the
+    optional questions asked THROUGH the open door.
+    """
+    monkeypatch.setattr(
+        agent, "converse_messages", FakeConverse({HAIKU: ConverseOutcome.DISABLED})
+    )
+
+    draft = SongDraft()
+    history: list[ConverseMessage] = []
+    ready_after: list[bool] = []
+    for message in ("a rainy late-night drive", "lo-fi", "calm"):
+        history.append({"role": "user", "content": [{"text": message}]})
+        result = await agent.run_turn(history=history, draft=draft)
+        history.append({"role": "assistant", "content": [{"text": result.reply}]})
+        draft = result.draft
+        ready_after.append(result.ready)
+
+    assert ready_after == [False, False, True]
+    # Open, and still asking: vocals is undecided and is what comes next.
+    assert draft.lyrics_mode is None
+    assert "instrumental" in result.reply
+
+
+@pytest.mark.asyncio
+async def test_a_vocals_question_nobody_answers_is_not_asked_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Vocals joined the ask-ONCE half of the ladder when it stopped gating the
+    door, so it needs that half's guarantee too: "whatever" leaves the field
+    null, and a ladder that waited for a value would ask forever.
+    """
+    monkeypatch.setattr(
+        agent, "converse_messages", FakeConverse({HAIKU: ConverseOutcome.DISABLED})
+    )
+    three = SongDraft.model_validate(
+        {"prompt": "a rainy drive", "genre": "Lo-Fi", "mood": "Calm"}
+    )
+
+    asked = agent._OFFLINE_QUESTIONS["lyrics_mode"]
+    result = await agent.run_turn(history=_answering(asked, "whatever"), draft=three)
+
+    assert result.draft.lyrics_mode is None
+    assert result.ready is True
+    assert result.reply != asked
 
 
 @pytest.mark.asyncio
