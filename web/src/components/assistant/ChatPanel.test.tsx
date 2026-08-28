@@ -246,8 +246,12 @@ describe("ChatPanel", () => {
     );
     renderWithProviders(<ChatPanel />);
 
-    // Nobody is held hostage by the server's `ready` decision.
-    expect(await screen.findByRole("button", { name: /Use what we have/ })).toBeInTheDocument();
+    // Nobody is held hostage by the server's `ready` decision. Same words as
+    // the DraftCard's button because it is the same destination and the same
+    // draft — only the weight differs.
+    expect(
+      await screen.findByRole("button", { name: /Continue in Create/ }),
+    ).toBeInTheDocument();
   });
 
   it("renders the suggestions the turn came back with", async () => {
@@ -285,12 +289,27 @@ describe("ChatPanel", () => {
     serve(session({ messages: [{ id: "m0", role: "user", content: "hi", created_at: "2026-08-25T12:00:00Z" }] }));
     renderWithProviders(<ChatPanel />);
 
-    // The toggle is the way out. There is no separate close: an X would have
-    // done exactly this while naming neither where it went nor what it left.
+    // The toggle is the way out that NAMES where it goes — the header X is the
+    // same destination in a smaller target, for someone who already knows.
     await user.click(await screen.findByRole("tab", { name: "Talk" }));
 
     expect(useAssistant.getState().mode).toBe("talk");
     // Leaving is a UI state change, not a DELETE — the transcript is durable.
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "DELETE"),
+    ).toHaveLength(0);
+  });
+
+  it("closes to Talk from the header X, and keeps the transcript", async () => {
+    const user = userEvent.setup();
+    serve(session({ messages: [{ id: "m0", role: "user", content: "hi", created_at: "2026-08-25T12:00:00Z" }] }));
+    renderWithProviders(<ChatPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Close chat" }));
+
+    expect(useAssistant.getState().mode).toBe("talk");
+    // Closing is NOT starting over. The reset button beside it is the one that
+    // deletes, and confusing the two loses a conversation the user still wants.
     expect(
       fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "DELETE"),
     ).toHaveLength(0);

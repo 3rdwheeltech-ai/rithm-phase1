@@ -13,6 +13,9 @@ export type AssistantMode = "talk" | "chat";
 interface AssistantState {
   mode: AssistantMode;
   setMode: (mode: AssistantMode) => void;
+  /** Whether this page load has already restored a live conversation. */
+  resumed: boolean;
+  markResumed: () => void;
 }
 
 /**
@@ -26,8 +29,18 @@ interface AssistantState {
  * chat when the server returns a non-empty transcript. Persisting this instead
  * would mean a stale flag deciding what the panel shows, which is the same
  * information in two places.
+ *
+ * `resumed` is what makes that restore happen ONCE PER PAGE LOAD rather than
+ * once per mount, and it is load-bearing rather than an optimisation. The two
+ * panels swap places in Layout, so leaving chat REMOUNTS `AvatarPanel` — and
+ * an ungated restore would read the same non-empty transcript and throw the
+ * user straight back into the conversation they just closed. It shares `mode`'s
+ * lifetime for the same reason `mode` has it: "has this page load restored
+ * yet?" is a question a reload should be allowed to ask again.
  */
 export const useAssistant = create<AssistantState>((set) => ({
   mode: "talk",
   setMode: (mode) => set({ mode }),
+  resumed: false,
+  markResumed: () => set({ resumed: true }),
 }));

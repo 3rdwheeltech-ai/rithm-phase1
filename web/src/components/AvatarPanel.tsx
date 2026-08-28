@@ -123,6 +123,8 @@ export default function AvatarPanel({
 }) {
   const reduceMotion = usePrefersReducedMotion();
   const setMode = useAssistant((s) => s.setMode);
+  const resumed = useAssistant((s) => s.resumed);
+  const markResumed = useAssistant((s) => s.markResumed);
   const [comingSoon, setComingSoon] = useState<string | null>(null);
 
   /**
@@ -136,12 +138,20 @@ export default function AvatarPanel({
    * turn a Home-only feature into a request per page.
    *
    * ChatPanel reads the same cache entry, so opening costs no second request.
+   *
+   * ONCE PER PAGE LOAD, not once per mount — `resumed` is the whole reason
+   * that flag exists. Leaving chat remounts this panel with the transcript
+   * still sitting in the query cache, so an ungated restore would bounce the
+   * user back into the conversation they had just closed, and both ways out
+   * (the toggle and ChatPanel's X) would be dead controls.
    */
   const { data: session } = useChatSession();
   const hasTranscript = (session?.messages.length ?? 0) > 0;
   useEffect(() => {
-    if (hasTranscript) setMode("chat");
-  }, [hasTranscript, setMode]);
+    if (!hasTranscript || resumed) return;
+    markResumed();
+    setMode("chat");
+  }, [hasTranscript, resumed, markResumed, setMode]);
 
   // Matches the Player it stacks above, so the two read as one column of glass
   // rather than two different materials.

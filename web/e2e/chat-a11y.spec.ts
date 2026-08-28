@@ -124,7 +124,15 @@ test("the avatar's two doors are reachable and labelled", async ({ page }) => {
   const found = await violations(page);
   expect(found, describeFailures(found)).toEqual([]);
 
-  // And back again, from inside the conversation — the thing chat had no
+  // TWO ways back, and they must both work. The header X is the small one,
+  // beside the reset it is styled after — and it closes the panel without
+  // touching the conversation behind it.
+  await page.getByRole("button", { name: "Close chat" }).click();
+  await expect(page.getByRole("button", { name: "Talk" })).toBeVisible();
+  await page.getByRole("tab", { name: "Chat" }).click();
+  await expect(page.getByRole("region", { name: "AI assistant chat" })).toBeVisible();
+
+  // And the toggle, from inside the conversation — the thing chat had no
   // control for at all.
   await page.getByRole("tab", { name: "Talk" }).click();
   await expect(page.getByRole("button", { name: "Talk" })).toBeVisible();

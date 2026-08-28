@@ -5,10 +5,13 @@ import { useAssistant, type AssistantMode } from "../../store/assistant";
 /**
  * Talk / Chat, the way Create says Simple / Advanced.
  *
- * THE WAY BACK. Chat used to be a one-way door: opening it replaced the avatar
- * outright, and the only route home was an X that read as "close the panel"
- * rather than "go back to voice". A segmented control says what the other side
- * is, and says it from inside the conversation.
+ * THE WAY BACK, and the one that NAMES where it goes. Chat used to be a
+ * one-way door: opening it replaced the avatar outright, and the only route
+ * home was an X that read as "close the panel" rather than "go back to voice".
+ * A segmented control says what the other side is, and says it from inside the
+ * conversation. `ChatPanel`'s header X reaches the same place in one small
+ * target for someone who already knows the way — it is the shortcut, this is
+ * the sign.
  *
  * IT MUST SIT IN THE SAME PLACE IN BOTH PANELS — directly under the header row
  * in `AvatarPanel` and in `ChatPanel` — because switching swaps the whole

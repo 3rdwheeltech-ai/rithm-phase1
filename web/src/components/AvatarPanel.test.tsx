@@ -42,12 +42,12 @@ beforeEach(() => {
     },
   );
   useAuth.setState({ status: "authed" });
-  useAssistant.setState({ mode: "talk" });
+  useAssistant.setState({ mode: "talk", resumed: false });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAssistant.setState({ mode: "talk" });
+  useAssistant.setState({ mode: "talk", resumed: false });
 });
 
 describe("AvatarPanel", () => {
@@ -85,5 +85,23 @@ describe("AvatarPanel", () => {
     renderWithProviders(<AvatarPanel />);
 
     await waitFor(() => expect(useAssistant.getState().mode).toBe("chat"));
+  });
+
+  it("does not drag the user back into a conversation they closed", async () => {
+    // Leaving chat REMOUNTS this panel with the transcript still in the query
+    // cache, so the resume above would fire a second time and undo the exit —
+    // which made both ways out (the toggle and ChatPanel's X) dead controls.
+    // `resumed` is what makes the restore once per page load.
+    useAssistant.setState({ mode: "talk", resumed: true });
+    serve(
+      session({
+        session_id: "s1",
+        messages: [{ id: "m0", role: "user", content: "hi", created_at: "2026-08-25T12:00:00Z" }],
+      }),
+    );
+    renderWithProviders(<AvatarPanel />);
+
+    await screen.findByRole("button", { name: "Talk" });
+    expect(useAssistant.getState().mode).toBe("talk");
   });
 });

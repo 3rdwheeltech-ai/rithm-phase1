@@ -11,6 +11,8 @@ import {
   ChevronDown,
   Music,
   Heart,
+  Pin,
+  PinOff,
   Sparkles,
   Download,
   Trash2,
@@ -20,6 +22,7 @@ import { useHoverIntent } from "../lib/useHoverIntent";
 import { useLens } from "../lib/useLens";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { formatDuration, trackTags, trackTitle } from "../lib/track";
+import { useChrome } from "../store/chrome";
 import { useCreateUI } from "../store/createUI";
 import { hasNext, hasPrevious, usePlayer } from "../store/player";
 import { useDeleteTrack } from "../hooks/useDeleteTrack";
@@ -288,6 +291,10 @@ export default function Player({
   const onHome = variant === "home";
   const onMobile = variant === "mobile";
   const playerHeight = useCreateUI((s) => s.playerHeight);
+  // Only ever consulted on the rail: `onCreate` and `onHome` are expanded
+  // unconditionally, and mobile returns long before any of this.
+  const pinned = useChrome((s) => s.playerPinned);
+  const setPinned = useChrome((s) => s.setPlayerPinned);
 
   const track = usePlayer((s) => s.track);
   const playing = usePlayer((s) => s.isPlaying);
@@ -495,7 +502,11 @@ export default function Player({
   const progressPct = progress * 100;
   const totalText = formatDuration(duration || track?.length_seconds || 0);
 
-  const expanded = onCreate || onHome || open || hovered;
+  // `pinned` is what makes this survive the pointer leaving AND a reload —
+  // `open` is neither, and it re-latches itself to true on every new track
+  // below. Layout reads the same flag to reserve the width in the page, so a
+  // pinned rail sits beside the content rather than over it.
+  const expanded = onCreate || onHome || open || hovered || pinned;
   const heightStyle =
     onCreate && playerHeight
       ? { height: `clamp(460px, ${Math.round(playerHeight)}px, calc(100vh - 72px))` }
@@ -787,16 +798,47 @@ export default function Player({
           ) : (
             <div className="mb-3 flex items-center justify-between">
               <span className="eyebrow truncate">{track ? "Now Playing" : "Player"}</span>
+              {/*
+                The rail's two controls. `!onCreate && !onHome` IS the rail on
+                this branch — mobile returns hundreds of lines above, and the
+                other two are expanded unconditionally with nothing to collapse.
+              */}
               {!onCreate && !onHome && (
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  title="Collapse"
-                  aria-label="Collapse player"
-                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
-                >
-                  <ChevronRight className="h-[18px] w-[18px]" strokeWidth={1.75} />
-                </button>
+                <div className="flex flex-shrink-0 items-center">
+                  <button
+                    type="button"
+                    onClick={() => setPinned(!pinned)}
+                    aria-pressed={pinned}
+                    title={pinned ? "Unpin player" : "Pin player"}
+                    aria-label={pinned ? "Unpin player" : "Pin player"}
+                    className={cn(
+                      "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-control transition-colors hover:bg-white/[0.06] hover:text-ink",
+                      pinned ? "text-ink-muted" : "text-ink-faint",
+                    )}
+                  >
+                    {pinned ? (
+                      <PinOff className="h-[17px] w-[17px]" strokeWidth={1.75} />
+                    ) : (
+                      <Pin className="h-[17px] w-[17px]" strokeWidth={1.75} />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    // Unpins as well as closing. `pinned` holds `expanded`
+                    // true whatever `open` says, so a Collapse that only set
+                    // `open` would be a control that visibly does nothing.
+                    onClick={() => {
+                      setOpen(false);
+                      setPinned(false);
+                    }}
+                    title="Collapse"
+                    aria-label="Collapse player"
+                    className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
+                  >
+                    <ChevronRight className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                  </button>
+                </div>
               )}
             </div>
           )}

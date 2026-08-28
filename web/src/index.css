@@ -38,6 +38,9 @@
     --on-signal: 4 20 17;
 
     --amber: 255 180 84;
+    --amber-dim: 201 138 58;
+    /* Ink for text sitting *on* amber, the same job --on-signal does for teal. */
+    --on-amber: 38 22 4;
     --danger: 255 107 107;
     --ink: 236 239 242;
 
@@ -79,6 +82,28 @@
   body {
     @apply min-h-full bg-void font-sans text-base text-ink antialiased;
     overflow-x: hidden;
+  }
+
+  /*
+    NO SCROLLBARS, ANYWHERE. Scrolling is untouched; only the chrome is gone.
+
+    Everything on this screen is glass over a lit field, and a grey OS gutter
+    down the side of it is the one thing that is not. The app's primary scroll
+    surface is `<main>` (Layout.tsx), inset between the two rails, so the bar
+    used to sit in the middle of the layout rather than at its edge.
+
+    In `@layer base` and on a bare `*`, so it is the lowest-specificity rule in
+    the file: anything that ever needs a visible scrollbar back can say so with
+    a single utility and win. `color-scheme: dark` above stays — it still
+    decides how native form controls and the overscroll background render.
+  */
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
   }
 
   /*
@@ -472,6 +497,49 @@
 
   .glass-btn-solid:hover:not(:disabled) {
     background: rgb(var(--room-raised) / 0.98);
+  }
+
+  /*
+    The handoff out of the chat, and the one place amber is an ACTION rather
+    than a warning.
+
+    `.btn-primary`'s recipe with the warm pole substituted for the cool one:
+    dark ink on a bright fill, because that pairing is what reads as a lit
+    console key and because white fails AA on both of these hues. Amber rather
+    than signal on purpose — the DraftCard sits at the bottom of a panel of
+    teal chrome, and one more teal button there is a button nobody sees.
+
+    Not `.btn-primary` itself: that is `w-full py-3 text-base`, sized for the
+    Create and Generate buttons, and this lives in a 245px card.
+  */
+  .glass-btn-amber {
+    color: rgb(var(--on-amber));
+    /* The 168deg sheen the glass group paints, kept on top of the fill — the
+       background shorthand replaces that layer wholesale. */
+    background:
+      linear-gradient(
+        168deg,
+        rgb(255 255 255 / 0.22) 0%,
+        rgb(255 255 255 / 0) 46%,
+        rgb(0 0 0 / 0.08) 100%
+      ),
+      linear-gradient(158deg, rgb(var(--amber)) 0%, rgb(var(--amber-dim)) 100%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.3),
+      0 4px 16px rgb(var(--amber) / 0.26),
+      0 1px 4px rgb(0 0 0 / 0.4);
+  }
+
+  .glass-btn-amber:hover:not(:disabled) {
+    filter: brightness(1.06);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.36),
+      0 6px 22px rgb(var(--amber) / 0.36),
+      0 2px 8px rgb(0 0 0 / 0.4);
+  }
+
+  .glass-btn-amber:active:not(:disabled) {
+    filter: brightness(0.94);
   }
 
   /*
@@ -886,7 +954,13 @@
   }
 }
 
-/* Hide a scrollbar without losing the scrolling. */
+/*
+  Marks a container as deliberately chromeless.
+
+  The global rule in @layer base hides every scrollbar now, so this no longer
+  does the hiding — it is kept because it says WHY these three are bare. Both
+  carousels pair it with a `maskImage` fade that is the real edge affordance.
+*/
 .scroll-plain {
   scrollbar-width: none;
   -ms-overflow-style: none;

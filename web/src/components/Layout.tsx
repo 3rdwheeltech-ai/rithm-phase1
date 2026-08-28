@@ -6,6 +6,7 @@ import { decodeJwt } from "../lib/jwt";
 import { DESKTOP_QUERY, useMediaQuery } from "../lib/useMediaQuery";
 import { useAssistant } from "../store/assistant";
 import { useAuth } from "../store/auth";
+import { useChrome } from "../store/chrome";
 import { usePlayer } from "../store/player";
 import Sidebar from "./Sidebar";
 import TabBar from "./TabBar";
@@ -20,6 +21,43 @@ const AvatarPanel = lazy(() => import("./AvatarPanel"));
 // would walk those 400kB straight back into the entry chunk and undo the split
 // above.
 const ChatPanel = lazy(() => import("./assistant/ChatPanel"));
+
+/** Which shape the shell is in. Home and Create own the right column outright. */
+export type ShellVariant = "home" | "create" | "rail" | "mobile";
+
+/**
+ * The gutters `<main>` leaves for the two rails.
+ *
+ * Lifted out of the JSX because it is now a function of three things rather
+ * than one, and because it is the part of pinning that is easiest to get
+ * subtly wrong — a unit test over a pure function beats rendering the whole
+ * shell to read a class name off it.
+ *
+ * EVERY CLASS IS A WHOLE LITERAL. Tailwind's scanner reads source text, so a
+ * built-up string like `lg:ml-[${n}px]` compiles to nothing at all.
+ *
+ * The numbers are all rail width + the 12px `left-3`/`right-3` gutter + 12px of
+ * air: 64+24 = 88 collapsed and 228+24 = 252 pinned on the left, 58+24 = 82
+ * collapsed on the right. The pinned rail reuses `create`'s 332 rather than
+ * deriving its own — it is the same 300px component in the same place, and two
+ * different margins for one box is how they drift apart.
+ */
+export function shellMargin(
+  variant: ShellVariant,
+  navPinned: boolean,
+  playerPinned: boolean,
+): string {
+  const left = navPinned ? "lg:ml-[252px]" : "lg:ml-[88px]";
+  const right =
+    variant === "home"
+      ? "lg:mr-[336px] xl:mr-[364px]"
+      : variant === "create"
+        ? "lg:mr-[332px]"
+        : playerPinned
+          ? "lg:mr-[332px]"
+          : "lg:mr-[82px]";
+  return `${left} ${right}`;
+}
 
 /**
  * App shell shared by every signed-in page.
@@ -58,12 +96,16 @@ export default function Layout({ children }: { children: ReactNode }) {
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const hasTrack = usePlayer((s) => s.track !== null);
   const chatting = useAssistant((s) => s.mode === "chat");
+  // Pinning a rail widens the gutter it sits in, so the page reflows around it
+  // instead of being covered — see `shellMargin` and `store/chrome.ts`.
+  const navPinned = useChrome((s) => s.navPinned);
+  const playerPinned = useChrome((s) => s.playerPinned);
 
   // The right column varies by route: on Home it's a wide always-open stack
   // (avatar + player), on /create the player is pinned open, elsewhere it
   // collapses to its narrow rail. Below `lg` none of that applies.
   const path = useLocation().pathname;
-  const variant = !isDesktop
+  const variant: ShellVariant = !isDesktop
     ? "mobile"
     : path === "/"
       ? "home"
@@ -163,13 +205,11 @@ export default function Layout({ children }: { children: ReactNode }) {
           // Mobile: the page scrolls, and leaves room for the dock.
           "pb-[calc(var(--dock)+env(safe-area-inset-bottom))]",
           // Desktop: the shell is fixed and this column does the scrolling.
-          "lg:h-full lg:overflow-y-auto lg:pb-0 lg:pl-0 lg:ml-[88px]",
+          "lg:h-full lg:overflow-y-auto lg:pb-0 lg:pl-0",
+          // Matches the rails' own `transition-[width] duration-300`, so a pin
+          // moves the gutter and the panel as one movement rather than two.
           "transition-[margin] duration-300 ease-out",
-          variant === "home"
-            ? "lg:mr-[336px] xl:mr-[364px]"
-            : variant === "create"
-              ? "lg:mr-[332px]"
-              : "lg:mr-[82px]",
+          shellMargin(variant, navPinned, playerPinned),
         )}
       >
         {children}

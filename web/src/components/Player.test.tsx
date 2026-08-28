@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import Player from "./Player";
+import { useChrome } from "../store/chrome";
 import { usePlayer } from "../store/player";
 import { renderWithProviders, jsonResponse } from "../test-utils";
 import type { TrackSummary } from "../types/api";
@@ -42,12 +44,15 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
   usePlayer.setState({ track: TRACK, queue: [TRACK], isPlaying: false, position: 0 });
+  // Persisted, so a `true` left behind by one case would follow the file.
+  useChrome.setState({ navPinned: false, playerPinned: false });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   usePlayer.setState({ track: null, queue: [], isPlaying: false, position: 0 });
+  useChrome.setState({ navPinned: false, playerPinned: false });
 });
 
 describe("Player", () => {
@@ -317,5 +322,56 @@ describe("Player — compact", () => {
 
     // The full body, because /create pins the player open.
     expect(screen.getByRole("slider")).toBeInTheDocument();
+  });
+
+  /*
+    The rail is the only variant with anything to pin. `matchMedia` answers "no
+    match" to everything in setupTests, so `useHoverIntent` is inert here and
+    the rail's width is decided by the pin and the loaded track alone.
+  */
+  describe("on a rail route", () => {
+    it("pins open, and says which way the control goes", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Player variant="rail" />);
+
+      // A loaded track latches `open` true, so the header is already showing.
+      await user.click(screen.getByRole("button", { name: "Pin player" }));
+
+      expect(useChrome.getState().playerPinned).toBe(true);
+      expect(screen.getByRole("button", { name: "Unpin player" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    it("stays open with nothing loaded once it is pinned", () => {
+      useChrome.setState({ playerPinned: true });
+      usePlayer.setState({ track: null, queue: [], isPlaying: false, position: 0 });
+      renderWithProviders(<Player variant="rail" />);
+
+      // Expanded: the collapsed stub has none of this, only a chevron and a
+      // play button. Nothing here hovered it and no track latched it open.
+      expect(screen.getByRole("button", { name: "Collapse player" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Expand player" })).toBeNull();
+    });
+
+    it("collapses AND unpins from the chevron", async () => {
+      const user = userEvent.setup();
+      useChrome.setState({ playerPinned: true });
+      renderWithProviders(<Player variant="rail" />);
+
+      await user.click(screen.getByRole("button", { name: "Collapse player" }));
+
+      // Both halves matter: `pinned` holds `expanded` true whatever `open`
+      // says, so a Collapse that only cleared `open` would visibly do nothing.
+      expect(useChrome.getState().playerPinned).toBe(false);
+      expect(await screen.findByRole("button", { name: "Expand player" })).toBeInTheDocument();
+    });
+
+    it("offers no pin on Home or Create, which have nothing to hold open", () => {
+      renderWithProviders(<Player variant="home" />);
+
+      expect(screen.queryByRole("button", { name: /pin player/i })).toBeNull();
+    });
   });
 });

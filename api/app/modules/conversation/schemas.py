@@ -283,14 +283,19 @@ def draft_is_ready(draft: SongDraft) -> bool:
     reporting a mood, not a fact, and the DraftCard appearing over an empty
     form is the one failure the user cannot recover from without starting over.
 
-    A prompt, a genre, a mood, and a decision about vocals. Length, tempo and
-    instruments all have sensible defaults in the form; those four do not.
+    THREE THINGS: what the song is, its genre, its mood. Nothing else is
+    withheld for, and the bar is deliberately low — the door opening is not the
+    interview ending. Vocals, voice, instruments and length all keep being
+    asked afterwards, one at a time, with the card already on screen; the
+    person answers as many as they feel like and leaves whenever they want.
+
+    Vocals used to be the fourth condition and is not any more. It has a form
+    default like the rest of them (`lyrics_mode ?? "write"`, web/src/lib/chat.ts)
+    and holding the door shut for it cost a whole extra turn for something the
+    Create form asks in a two-option toggle.
     """
     return (
-        draft.prompt is not None
-        and draft.genre is not None
-        and draft.mood is not None
-        and draft.lyrics_mode is not None
+        draft.prompt is not None and draft.genre is not None and draft.mood is not None
     )
 
 
