@@ -54,34 +54,43 @@ export type VoiceEndReason =
   | "mic-denied"
   | "mic-timeout";
 
+/** One line of the conversation, as POST /chat/turns/record wants it. */
+export interface RecordedTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /**
- * What one turn resolves to, from the caller's side of `/chat/messages`.
+ * What recording a batch resolves to.
  *
- * A failed turn is a `spoken-error` rather than a rejection, because in voice
- * an error has to be SAID — a muted inline row is the chat door's answer and
- * there is nothing to read here. `end` carries the reason rather than the
- * caller sniffing the copy: a 503 keeps the session open (the message is
- * already committed server-side, so "say it again" works), while a 409 or a
- * 429 must close it rather than hold the one global slot open for a server
- * that will refuse the next turn too.
+ * A failed record is a `spoken-error` rather than a rejection for the reason
+ * the old reply path had: in voice an error has to be SAID, because there is
+ * nothing to read. `end` carries the reason rather than the caller sniffing
+ * copy — a 409 or a 429 must close the session rather than hold the product's
+ * one global slot open for a server that will refuse the next batch too.
+ *
+ * NOTE the failure is quieter than it used to be. Recording does not produce
+ * the reply any more, so a refusal costs the DRAFT rather than the answer: the
+ * user keeps talking to Anam and hears nothing wrong, while nothing is being
+ * captured. That is why `voice_turn_recorded` is the line to alarm on.
  */
-export type VoiceTurnOutcome =
-  | { kind: "reply"; text: string; suggestions: string[] }
+export type VoiceRecordOutcome =
+  | { kind: "recorded" }
   | { kind: "spoken-error"; text: string; end: VoiceEndReason | null };
 
 export interface VoiceTurnLoopOptions {
   client: AnamClientLike;
   /**
-   * Runs one turn against `/chat/messages`. STABLE across renders — the loop
-   * registers it once at session start, and a callback whose identity changed
-   * per render would leave the loop holding a `mutateAsync` from three turns
-   * ago.
+   * Records a batch of turns against `/chat/turns/record`. STABLE across
+   * renders — the loop registers it once at session start, and a callback
+   * whose identity changed per render would leave the loop holding a
+   * `mutateAsync` from three turns ago.
    */
-  runTurn: (text: string) => Promise<VoiceTurnOutcome>;
+  recordTurns: (turns: RecordedTurn[]) => Promise<VoiceRecordOutcome>;
   onPhase: (phase: VoicePhase) => void;
-  /** A user utterance, the moment STT finalises it — the ~3 s cover (layer 1). */
+  /** A user utterance, the moment STT finalises it. */
   onUserTranscript: (text: string) => void;
-  /** The assistant's reply, once the server has it. */
+  /** A line the persona said, as Anam reports it. */
   onAssistantReply: (text: string, suggestions: string[]) => void;
   /** The video actually started playing. The session clock starts HERE. */
   onVideoPlaying: () => void;
@@ -101,12 +110,15 @@ export class VoiceTurnLoop {
   private readonly dispatched = new Set<string>();
 
   /**
-   * id → latest text, waiting on the debounce.
+   * id → turn, waiting on the debounce.
    *
-   * A Map keyed by message id, not an array: a growing partial transcript
-   * REPLACES its earlier self rather than queueing as two turns.
+   * A Map keyed by message id, not an array, for two reasons: a growing
+   * partial transcript REPLACES its earlier self rather than queueing as two
+   * turns, and insertion order is preserved — which matters far more now that
+   * both roles ride this buffer. A batch whose order was scrambled would write
+   * an answer above the question it answered.
    */
-  private buffer = new Map<string, string>();
+  private buffer = new Map<string, RecordedTurn>();
   private debounce: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -232,20 +244,58 @@ export class VoiceTurnLoop {
 
   // ── Hearing ──────────────────────────────────────────────────────────────
 
+  /**
+   * BOTH ROLES ARE RECORDED NOW, and that is the change the brain switch made.
+   *
+   * The persona's rows used to be dropped as an echo of what we had just told
+   * Anam to say — resending those was an infinite loop that billed every hop.
+   * That loop cannot exist any more: this class no longer produces replies, so
+   * a persona row is not an echo of ours, it is Anam's model ANSWERING, and it
+   * is the only copy of that answer anywhere. Drop it and Chat shows a
+   * transcript with holes in it.
+   */
   private onHistory(messages: AnamMessage[]): void {
     if (this.disposed || this.muted) return;
 
     for (const message of messages) {
-      // GUARD 1: the persona's rows are what WE just spoke, echoed back.
-      // Sending those is an infinite loop that bills every hop.
-      if (message.role !== "user") continue;
-      // GUARD 2: the event carries the full history every time.
+      // GUARD 1: the event carries the full history every time, and fires more
+      // than once per utterance (an interim transcript, then a revised final).
+      // Without this, turn six resends turns one to five.
       if (this.dispatched.has(message.id)) continue;
-      // GUARD 3: STT emits empties on a cough, and `ChatTurnRequest` has
-      // min_length=1 with str_strip_whitespace=True — so an empty turn is a 422.
+      // GUARD 2: STT emits empties on a cough, and `RecordedTurn` has
+      // min_length=1 with str_strip_whitespace=True — an empty turn is a 422.
       const text = message.content.trim();
       if (text === "") continue;
-      this.buffer.set(message.id, text);
+
+      // Anam's own word for its side is "persona"; the API's is "assistant".
+      // Translated here, at the vendor boundary, rather than anywhere further
+      // in — `MessageRole` in the docs claims "assistant" and is wrong.
+      const role = message.role === "user" ? "user" : "assistant";
+      this.buffer.set(message.id, { role, content: text });
+
+      if (role === "user") {
+        this.options.onUserTranscript(text);
+      } else {
+        this.lastReplyText = text;
+        this.options.onAssistantReply(text, []);
+        /*
+          "speaking", not "listening", and the difference is load-bearing.
+
+          Anam adds a persona row when it has produced the line, i.e. as it
+          starts saying it — so this is the truest moment we can observe. We
+          never see it FINISH (no such event is in the SDK slice), so the phase
+          stays here until the user speaks again and USER_SPEECH_ENDED moves it
+          to "thinking".
+
+          That imprecision costs nothing visually — `auraClass` only
+          distinguishes "thinking" from everything else — and it is what keeps
+          `hasUnspokenReply` meaningful now that we are not the ones talking:
+          a drop in this phase means the connection died on a reply the user
+          may only have half heard, which is why they get sent to Chat to read
+          the rest of it.
+        */
+        this.setPhase("speaking");
+      }
     }
 
     if (this.buffer.size === 0) return;
@@ -257,48 +307,37 @@ export class VoiceTurnLoop {
     this.debounce = null;
     if (this.disposed || this.muted || this.buffer.size === 0) return;
 
-    const text = [...this.buffer.values()].join(" ").trim();
+    const batch = collapseRuns([...this.buffer.values()]);
     for (const id of this.buffer.keys()) this.dispatched.add(id);
     this.buffer.clear();
-    if (text === "") return;
+    if (batch.length === 0) return;
 
-    // Shown at 0 ms, and this is the real cover for the ~3 s think. It answers
-    // the anxiety the user actually has during the gap, which is not "is it
-    // fast?" but "did it hear me, and did it hear me right?"
-    this.options.onUserTranscript(text);
-    this.setPhase("thinking");
-
-    // Serialised, not dropped. The 3 s gap is EXACTLY when people speak again —
-    // a correction, a "sorry, I meant jazz" — and swallowing that is worse than
-    // answering it a turn late.
-    this.inFlight = this.inFlight.then(() => this.runTurn(text));
+    // Serialised, not dropped, for the reason the reply path was: two
+    // concurrent POSTs both append rows and both `save_draft` last-writer-wins,
+    // and they complete in an order that need not be send order — an
+    // out-of-order transcript the user can then read in Chat.
+    this.inFlight = this.inFlight.then(() => this.record(batch));
   }
 
-  private async runTurn(text: string): Promise<void> {
+  private async record(batch: RecordedTurn[]): Promise<void> {
     if (this.disposed) return;
-    let outcome: VoiceTurnOutcome;
+    let outcome: VoiceRecordOutcome;
     try {
-      outcome = await this.options.runTurn(text);
+      outcome = await this.options.recordTurns(batch);
     } catch {
-      // `runTurn` is expected to map every problem type to an outcome. A throw
-      // that reaches here is a bug in the caller, not a turn — and it must not
-      // take the session down with it.
-      this.setPhase("listening");
+      // `recordTurns` is expected to map every problem type to an outcome. A
+      // throw reaching here is a bug in the caller, not a turn — and it must
+      // not take the session down with it.
       return;
     }
-    if (this.disposed) return;
+    if (this.disposed || outcome.kind === "recorded") return;
 
-    if (outcome.kind === "spoken-error") {
-      this.speak(outcome.text);
-      // A 409 or a 429 ends the session; a 503 does not, because the user's
-      // message is already committed and saying it again genuinely works.
-      if (outcome.end !== null) this.options.onEnd(outcome.end);
-      return;
-    }
-
-    this.lastReplyText = outcome.text;
-    this.options.onAssistantReply(outcome.text, outcome.suggestions);
+    // Still SPOKEN. `createTalkMessageStream` works regardless of which brain
+    // is answering, so the one thing we still say out loud is the thing the
+    // user could not otherwise discover: that their conversation stopped being
+    // recorded.
     this.speak(outcome.text);
+    if (outcome.end !== null) this.options.onEnd(outcome.end);
   }
 
   // ── Speaking ─────────────────────────────────────────────────────────────
@@ -393,4 +432,30 @@ export class VoiceTurnLoop {
     this.listeners.push([event, erased]);
     this.client.addListener(event, erased);
   }
+}
+
+/**
+ * Merge consecutive same-role turns into one.
+ *
+ * Anam's STT can finalise one sentence as two messages 200 ms apart, and the
+ * extractor reads a user turn as the answer to the question before it — so
+ * "hip" and "hop" arriving separately would be two answers, one of them
+ * nonsense. Joining only ADJACENT runs is what keeps this safe: a persona row
+ * between two user rows ends the run, so a reply can never be absorbed into a
+ * question or vice versa.
+ */
+function collapseRuns(turns: RecordedTurn[]): RecordedTurn[] {
+  const out: RecordedTurn[] = [];
+  for (const turn of turns) {
+    const last = out[out.length - 1];
+    if (last !== undefined && last.role === turn.role) {
+      out[out.length - 1] = {
+        role: last.role,
+        content: `${last.content} ${turn.content}`.trim(),
+      };
+    } else {
+      out.push({ ...turn });
+    }
+  }
+  return out;
 }

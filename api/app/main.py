@@ -34,24 +34,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "SSE_TOKEN_SECRET is the public default in prod — refusing to start"
         )
 
-    # THE MOST IMPORTANT DEFENSIVE LINE IN THE VOICE FEATURE, because the
-    # failure it prevents is SILENT. CUSTOMER_CLIENT_V1 is what turns Anam's own
-    # brain off and leaves speech-to-text and text-to-speech on. With anything
-    # else there, the avatar answers with its own model: the reply never reaches
-    # /chat/messages, the draft never moves, and the Chat door shows a
-    # transcript with a hole in it. No error, no 500, no alarm — just an empty
-    # DraftCard six turns into a conversation that felt fine.
+    # THE SAME GUARD AS BEFORE, TURNED AROUND — and it is worth reading why
+    # rather than assuming it was weakened.
     #
-    # The same trade the SSE-secret check above makes: convert an invisible
-    # wrong answer into a deployment that never stabilises. `extra="ignore"` on
+    # It used to refuse ANY value other than CUSTOMER_CLIENT_V1, because the
+    # backend supplied every reply and Anam's own model answering instead was a
+    # silent failure. That is no longer the design: Anam's LLM now conducts the
+    # conversation, for the latency reasons config.py records.
+    #
+    # So the failure worth catching has INVERTED. CUSTOMER_CLIENT_V1 means
+    # "Anam's brain is off" — and the client no longer supplies replies either,
+    # because VoiceTurnLoop was reduced to a recorder. Both brains off is an
+    # avatar that connects, renders, listens, and never says anything. An old
+    # task-definition revision carrying the previous value is the exact way
+    # someone gets there, and it would look like a broken avatar rather than a
+    # misconfiguration.
+    #
+    # Same trade the SSE-secret check above makes: convert an invisible wrong
+    # answer into a deployment that never stabilises. `extra="ignore"` on
     # Settings is what makes it necessary — a misspelled env var falls back to
     # the default rather than erroring.
-    if settings.anam_enabled and settings.anam_llm_id != "CUSTOMER_CLIENT_V1":
+    if settings.anam_enabled and settings.anam_llm_id == settings.anam_disabled_llm_id:
         raise RuntimeError(
-            "ANAM_LLM_ID is not CUSTOMER_CLIENT_V1. The avatar would answer "
-            "with its own model: the reply never reaches /chat/messages, the "
-            "draft never moves, and the Chat door shows a transcript with a "
-            "hole in it. Refusing to start."
+            f"ANAM_LLM_ID is {settings.anam_disabled_llm_id}, which turns Anam's "
+            "own brain OFF — but this build no longer answers from the backend, "
+            "so nothing would speak. The avatar would connect and stay silent. "
+            "Refusing to start."
         )
 
     # An avatar with the wrong voice is worse than no avatar, and there is no

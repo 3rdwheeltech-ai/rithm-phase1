@@ -1,4 +1,5 @@
 import { cn } from "../lib/cn";
+import riaPortrait from "../assets/ria-portrait.webp";
 
 /**
  * The assistant's face for phones — a still, and NOT a downgrade.
@@ -17,12 +18,14 @@ import { cn } from "../lib/cn";
  * It is not a compromise on mobile: the assistant has never rendered there at
  * all, so this is the FIRST face phones have had, not a lesser version of one.
  *
- * `src` takes a real portrait when there is one to take; until then the mark
- * below stands in, and swapping it is a one-line change with no other
- * consequence.
+ * `src` NOW DEFAULTS TO RIA — the real portrait this file was waiting for, and
+ * the same face the Anam avatar wears once Talk is pressed. The abstract mark
+ * below is kept as the fallback for `src={undefined}`. Phones pay 82 kB of
+ * WebP for it, not the 400 kB of Lottie renderer this component exists to
+ * avoid, so the reason it exists is untouched.
  */
 export default function AssistantPoster({
-  src,
+  src = riaPortrait,
   className = "",
 }: {
   src?: string;
@@ -41,7 +44,10 @@ export default function AssistantPoster({
         <img
           src={src}
           alt=""
-          className="relative aspect-square w-full object-cover"
+          // `object-top`, not the default centre: the source is 768x1152 and
+          // the face is in the upper half, so a centred square crop takes the
+          // top of her head off. Matches AssistantAvatar.
+          className="relative aspect-square w-full object-cover object-top"
         />
       ) : (
         <svg

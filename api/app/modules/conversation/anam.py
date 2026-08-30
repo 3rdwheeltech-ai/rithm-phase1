@@ -68,6 +68,24 @@ async def mint_session_token() -> str:
         # carries its own llmId — referencing a persona id would hand us the
         # vendor's Gemini back, silently.
         #
+        # That is CONFIRMED against the live API, not inferred from the docs:
+        #   - personaConfig is a oneOf. It is EITHER this object OR
+        #     {"personaId": "…"}, never both — so there is no way to name a
+        #     saved persona AND still pin llmId here. Passing a persona id is
+        #     choosing whatever brain that persona happens to be saved with.
+        #   - GET /v1/llms lists CUSTOMER_CLIENT_V1 with displayName
+        #     "Disable LLM" and llmFormat "none". It is the vendor's own off
+        #     switch, which is why it is a magic string and not a UUID.
+        #   - The Ria-rithm persona in the Lab (dc179739-…) answers with
+        #     llmId a7cf662c-… = GPT OSS 120B, a LIVE brain, and carries the
+        #     whole of docs/others/anam-system.md in brain.systemPrompt plus a
+        #     Knowledge tool. Referencing it by id would hand the interview to
+        #     that model and produce exactly the silent failure above. It is
+        #     inert only because this body sends personaConfig instead.
+        # So "use the persona I made in the Lab" is not a config change here:
+        # it is copying that persona's avatarId and voiceId into config.py,
+        # which is what anam_avatar_id and anam_voice_id already hold.
+        #
         # Second, it puts the avatar, the voice and the model in config.py
         # under review, rather than in whatever state someone last left the
         # Anam Lab UI in. A saved persona's brain is set in a web console: not
@@ -87,6 +105,16 @@ async def mint_session_token() -> str:
             "avatarModel": settings.anam_avatar_model,
             "voiceId": settings.anam_voice_id,
             "llmId": settings.anam_llm_id,
+            # THE SPA GREETS, NOT ANAM — and this is required rather than a
+            # preference now that Anam's own model is answering.
+            #
+            # `VoiceTurnLoop.greet()` speaks the LAST ASSISTANT LINE from the
+            # existing transcript, which is what picks a user arriving from
+            # Chat up mid-thought instead of asking their genre a second time.
+            # Anam knows nothing about that transcript and would open with its
+            # own hello. Without this flag the user hears both, and the one
+            # that carries the continuity is the one that arrives second.
+            "skipGreeting": True,
         }
     }
 

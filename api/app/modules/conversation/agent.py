@@ -761,6 +761,50 @@ def _suggestions(draft: SongDraft, asked: str = "") -> list[str]:
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class RecordResult:
+    """What extraction learned from a turn somebody else conducted."""
+
+    delta: SongDraft
+    draft: SongDraft
+    ready: bool
+
+
+async def record_turn(*, draft: SongDraft, user_text: str, asked: str) -> RecordResult:
+    """
+    Advance the draft from a turn this module did NOT produce.
+
+    `run_turn` does two things: it extracts the draft, then it writes the
+    reply. Since the avatar answers with Anam's own model, only the first half
+    is still ours — so this is `run_turn` with the chain removed, and
+    deliberately not a flag on `run_turn` itself. The two have different
+    failure modes (this one cannot 503, because there is no reply to lose) and
+    fusing them would put an `if` around the most important call in the file.
+
+    IT IS THE ONLY THING KEEPING THE FEATURE HONEST. Anam produces conversation;
+    this produces the validated record — genre from the closed list, mood from
+    the closed list, tempo in bounds — that pre-fills Create. A vendor model
+    wandering off-vocabulary in conversation is survivable precisely because
+    the value that lands here went through `SongDraft` validation on the way.
+
+    NEVER RAISES. A failed extraction returns the draft untouched, exactly as
+    `run_turn` treats it: the transcript is already committed and losing the
+    turn over a missed field would be the worse trade.
+    """
+    delta = await _extract(draft=draft, user_text=user_text, asked=asked)
+
+    # The offline interviewer's parse, on the same terms `run_turn` uses it:
+    # with Bedrock off, `_extract` returns an empty draft that is
+    # indistinguishable from "nothing learned", so the flag is what has to be
+    # read. This is what lets `docker compose up` with no AWS credentials still
+    # fill the form from a voice conversation.
+    if not get_settings().bedrock_enabled:
+        delta = _offline_delta(user_text=user_text, draft=draft)
+
+    merged = draft.merged_with(delta)
+    return RecordResult(delta=delta, draft=merged, ready=draft_is_ready(merged))
+
+
 async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnResult:
     """
     One assistant turn. `history` ends with the user message being answered.

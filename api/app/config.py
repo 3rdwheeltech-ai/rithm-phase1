@@ -131,24 +131,64 @@ class Settings(BaseSettings):
     anam_api_base: str = "https://api.anam.ai/v1"
 
     # The persona, passed as personaConfig at mint time rather than referenced
-    # by personaId — see conversation/anam.py. avatar_id is Flowerva.
-    anam_avatar_id: str = "3fff7cca-95a6-4980-b478-43488becdfaf"
+    # by personaId — see conversation/anam.py.
+    #
+    # avatar_id is "Ria", from the Ria-rithm persona. It is ORG-OWNED, and that
+    # is the sharp edge: it exists only in the Anam org the current key belongs
+    # to. The previous value here (3fff7cca…, "Flowerva") belonged to a
+    # DIFFERENT org and stopped existing the moment the key was rotated to a
+    # new account.
+    #
+    # And nothing catches that for you. POST /auth/session-token returns 200
+    # for an avatar id the key cannot see — the mint validates the body shape
+    # and the key, NOT the avatar. So a wrong id here sails past the boot
+    # guard, past the mint, and fails in the browser at connect time. Whenever
+    # the key moves to a new account, re-check this against:
+    #   curl -s "https://api.anam.ai/v1/avatars?perPage=200" \
+    #     -H "Authorization: Bearer $ANAM_API_KEY" \
+    #     | jq '[.data[] | select(.createdByOrganizationId != null)]'
+    anam_avatar_id: str = "317c3c80-70c0-4cd7-8f54-2668dd442624"
     anam_avatar_model: str = "cara-4"
     # ← MUST be filled before anam_enabled can be True. There is deliberately no
     # default: an avatar with the wrong voice is worse than no avatar, so an
     # empty value refuses (see main.py's lifespan guard) rather than papering
-    # over it. Recover the id with:
-    #   curl -s "https://api.anam.ai/v1/voices?perPage=100&search=Tara" \
+    # over it. The value to set is "Victoria - Refined Coordinator",
+    # c48e258f-5050-11f1-9076-5e955d484d11 — the voice the Ria-rithm persona
+    # was built with. Unlike the avatar, stock voices are NOT org-owned
+    # (createdByOrganizationId: null), so a voice id survives a move between
+    # accounts. Recover it with:
+    #   curl -s "https://api.anam.ai/v1/voices?perPage=100&search=Victoria" \
     #     -H "Authorization: Bearer $ANAM_API_KEY" | jq '.data[] | {id, name}'
     anam_voice_id: str = ""
     anam_persona_name: str = "Rithm"
 
-    # The magic value that turns Anam's own brain OFF and leaves STT + TTS on.
-    # NOT a model id. Anam's LLM answering instead of ours is a SILENT failure:
-    # the reply never reaches /chat/messages, the draft never moves, and the
-    # Chat door shows a transcript with a hole in it. main.py refuses to boot
-    # if this is anything else.
-    anam_llm_id: str = "CUSTOMER_CLIENT_V1"
+    # WHICH BRAIN ANSWERS ON THE VOICE SURFACE. This was CUSTOMER_CLIENT_V1 —
+    # Anam's "Disable LLM", which left it as ears and mouth only while
+    # agent.py did the interviewing. It is now Anam's own GPT OSS 120B
+    # (openai/gpt-oss-120b, via Groq), attached to the Ria-rithm persona.
+    #
+    # The reason is latency and nothing else. The old path was two SEQUENTIAL
+    # Bedrock calls — nova-micro extraction, then Claude Haiku — with the FULL
+    # reply generated before the avatar spoke a single word. Anam streams its
+    # own model straight into its own TTS, so the first word lands in a
+    # fraction of the time.
+    #
+    # WHAT THIS COSTS, stated plainly because it is not recoverable from the
+    # code: the interview prompt now lives in the Anam Lab console rather than
+    # in git, so it is unreviewed and changeable by anyone with dashboard
+    # access; and the closed genre/mood vocabularies are no longer guaranteed
+    # in CONVERSATION. They are still enforced on the way into the draft —
+    # conversation/api.py's record path runs agent.py's extractor over every
+    # user turn — so the RECORD stays correct even when the talk wanders.
+    #
+    # Setting this back to CUSTOMER_CLIENT_V1 without restoring the client-side
+    # reply path leaves NOBODY answering and a mute avatar. main.py refuses to
+    # boot on exactly that, which is the old guard turned around.
+    anam_llm_id: str = "a7cf662c-2ace-4de1-a21e-ef0fbf144bb7"
+
+    # The value that used to live in anam_llm_id, kept as a named constant
+    # because the boot guard and the tests both need to say it.
+    anam_disabled_llm_id: str = "CUSTOMER_CLIENT_V1"
 
     # The FREE tier's shape, as settings rather than as magic numbers. The SPA's
     # countdown runs off what the API returns, so changing the plan is a

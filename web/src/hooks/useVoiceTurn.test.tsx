@@ -28,18 +28,8 @@ const EMPTY: SongDraft = {
   lyrics_prompt: null,
 };
 
-function turnResponse(content: string) {
-  return {
-    message: {
-      id: "a1",
-      role: "assistant" as const,
-      content,
-      created_at: "2026-08-25T12:00:00Z",
-    },
-    draft: EMPTY,
-    ready: false,
-    suggestions: ["Lo-Fi"],
-  };
+function recordResponse(draft: SongDraft = EMPTY, ready = false) {
+  return { draft, ready };
 }
 
 function problem(status: number, type: string) {
@@ -75,21 +65,23 @@ afterEach(() => {
 });
 
 describe("useVoiceTurn", () => {
-  it("a voice turn lands in the same qk.chat entry ChatPanel renders", async () => {
+  it("a recorded voice turn lands in the same qk.chat entry ChatPanel renders", async () => {
     /*
-      THE CENTRAL DESIGN DECISION OF THE FEATURE, ASSERTED.
+      THE CENTRAL DESIGN DECISION OF THE FEATURE, AND IT SURVIVED THE BRAIN
+      SWITCH.
 
-      Anam is a face and a voice; the interview, the draft and the transcript
-      never move. Talk and Chat are two doors on ONE conversation — which is
-      what makes every fallback lossless, because everything ever said is
-      already on the server before a single word is spoken aloud.
+      Anam's own model writes the replies now, but the interview record, the
+      draft and the transcript never moved. Talk and Chat remain two doors on
+      ONE conversation — which is the property that stopped the switch being a
+      trade of the whole product for latency, because everything said out loud
+      is still on the server.
     */
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) =>
         Promise.resolve(
           init?.method === "POST"
-            ? jsonResponse(200, turnResponse("Nice one — what mood?"))
+            ? jsonResponse(200, recordResponse())
             : jsonResponse(200, {
                 session_id: null,
                 messages: [],
@@ -102,13 +94,12 @@ describe("useVoiceTurn", () => {
     );
 
     const { result } = renderHook(() => useVoiceTurn(), { wrapper });
-    const outcome = await result.current("a rainy drive");
+    const outcome = await result.current([
+      { role: "user", content: "a rainy drive" },
+      { role: "assistant", content: "Nice one — what mood?" },
+    ]);
 
-    expect(outcome).toEqual({
-      kind: "reply",
-      text: "Nice one — what mood?",
-      suggestions: ["Lo-Fi"],
-    });
+    expect(outcome).toEqual({ kind: "recorded" });
 
     // The SAME QueryClient. Nothing was passed between them but the cache.
     render(
@@ -125,33 +116,48 @@ describe("useVoiceTurn", () => {
     );
   });
 
-  it("marks the turn as coming through the voice door", async () => {
-    // It writes `sessions.voice_enabled` and puts `voice=true` on the
-    // `chat_turn` log line the rollout is read from.
+  it("posts both sides of the exchange, in order", async () => {
+    // The persona's line is the only copy that exists — Anam wrote it and this
+    // is the one path that persists it. Order matters because the extractor
+    // reads a user turn as the answer to the line above it.
     const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
       Promise.resolve(
         init?.method === "POST"
-          ? jsonResponse(200, turnResponse("ok"))
+          ? jsonResponse(200, recordResponse())
           : jsonResponse(200, { session_id: null, messages: [], draft: EMPTY, ready: false }),
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useVoiceTurn(), { wrapper });
-    await result.current("hello");
+    await result.current([
+      { role: "user", content: "hip-hop" },
+      { role: "assistant", content: "Hip-Hop it is." },
+    ]);
 
     const post = fetchMock.mock.calls.find(
       ([, init]) => (init as RequestInit | undefined)?.method === "POST",
     );
+    expect(String(post![0])).toContain("/chat/turns/record");
     expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({
-      message: "hello",
-      source: "voice",
+      turns: [
+        { role: "user", content: "hip-hop" },
+        { role: "assistant", content: "Hip-Hop it is." },
+      ],
     });
   });
 
-  it("maps assistant-unavailable to a spoken retry that keeps the session open", async () => {
-    // The user's message is already committed server-side, so saying it again
-    // genuinely works — and ending the call would cost them the slot too.
+  it("says nothing and keeps going when one batch fails for an unknown reason", async () => {
+    /*
+      THE DELIBERATE HALF OF THE NEW TRADE.
+
+      A refused turn used to cost the user their ANSWER, which they noticed at
+      once. It now costs the RECORD: Anam keeps talking and the conversation
+      sounds perfect. Interrupting a working call to announce a problem the
+      user cannot act on would cost more than it saves — the next batch may
+      land, and the draft rebuilds from whatever does. `voice_turn_recorded`
+      going quiet in CloudWatch is how the persistent version gets noticed.
+    */
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) =>
@@ -164,13 +170,9 @@ describe("useVoiceTurn", () => {
     );
 
     const { result } = renderHook(() => useVoiceTurn(), { wrapper });
-    const outcome = await result.current("a rainy drive");
+    const outcome = await result.current([{ role: "user", content: "a rainy drive" }]);
 
-    expect(outcome).toEqual({
-      kind: "spoken-error",
-      text: "Sorry — I lost that one. Say it again?",
-      end: null,
-    });
+    expect(outcome).toEqual({ kind: "recorded" });
   });
 
   it("maps chat-session-full to a spoken handoff that closes the session", async () => {
@@ -188,7 +190,7 @@ describe("useVoiceTurn", () => {
     );
 
     const { result } = renderHook(() => useVoiceTurn(), { wrapper });
-    const outcome = await result.current("a rainy drive");
+    const outcome = await result.current([{ role: "user", content: "a rainy drive" }]);
 
     expect(outcome).toMatchObject({ kind: "spoken-error", end: "chat-full" });
   });
@@ -206,7 +208,7 @@ describe("useVoiceTurn", () => {
     );
 
     const { result } = renderHook(() => useVoiceTurn(), { wrapper });
-    const outcome = await result.current("a rainy drive");
+    const outcome = await result.current([{ role: "user", content: "a rainy drive" }]);
 
     expect(outcome).toEqual({
       kind: "spoken-error",

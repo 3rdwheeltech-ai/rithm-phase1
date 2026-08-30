@@ -105,30 +105,64 @@ def _boot(app: FastAPI) -> None:
         pass
 
 
-def test_prod_refuses_to_start_when_the_anam_llm_id_is_not_the_client_sentinel(
+# Every ANAM_* variable the guards read. Set explicitly in each test rather
+# than inherited, because `Settings` has `env_file=".env"` and a developer who
+# has switched voice on locally would otherwise see these tests fail on their
+# machine and pass in CI — which is the worst way to learn about coupling.
+_ANAM_VARS = ("ANAM_ENABLED", "ANAM_VOICE_ID", "ANAM_LLM_ID")
+
+
+def _anam_env(monkeypatch: pytest.MonkeyPatch, **values: str) -> None:
+    """Pin every ANAM_* variable, so `.env` cannot reach into a guard test."""
+    for name in _ANAM_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+
+
+def test_it_refuses_to_start_when_both_brains_are_switched_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    The most important defensive line in the voice feature, because the failure
-    it prevents is SILENT: the avatar answers with its own model, the reply
-    never reaches /chat/messages, the draft never moves, and the only symptom
-    is a DraftCard that stays empty six turns in.
+    THE OLD GUARD, TURNED AROUND — and the inversion is the point.
 
-    This converts that into a deployment that never stabilises — the same trade
-    the SSE-secret check makes, and necessary for the same reason:
-    `extra="ignore"` means a misspelled variable silently takes a default.
+    It used to refuse anything that was NOT CUSTOMER_CLIENT_V1, back when the
+    backend wrote every reply and Anam answering instead was the silent
+    failure. Anam's own model now conducts the conversation, so the failure
+    worth catching is the opposite one: CUSTOMER_CLIENT_V1 turns Anam's brain
+    off, the client no longer supplies replies either, and the avatar would
+    connect, render, listen and never say a word.
+
+    An old task-definition revision carrying the previous value is exactly how
+    someone arrives there, and it would read as a broken avatar rather than as
+    a misconfiguration. So it is a deployment that never stabilises instead.
     """
-    monkeypatch.setenv("ANAM_ENABLED", "true")
-    monkeypatch.setenv("ANAM_VOICE_ID", "voice-id")
-    monkeypatch.setenv("ANAM_LLM_ID", "gemini-2.5-flash")
-    get_settings.cache_clear()
+    _anam_env(
+        monkeypatch,
+        ANAM_ENABLED="true",
+        ANAM_VOICE_ID="voice-id",
+        ANAM_LLM_ID="CUSTOMER_CLIENT_V1",
+    )
     try:
         with pytest.raises(RuntimeError, match="CUSTOMER_CLIENT_V1"):
             _boot(_build_app())
     finally:
-        for name in ("ANAM_ENABLED", "ANAM_VOICE_ID", "ANAM_LLM_ID"):
-            monkeypatch.delenv(name, raising=False)
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
+
+
+def test_a_real_anam_brain_boots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other half of the guard: any real model id is allowed through."""
+    _anam_env(
+        monkeypatch,
+        ANAM_ENABLED="true",
+        ANAM_VOICE_ID="voice-id",
+        ANAM_LLM_ID="a7cf662c-2ace-4de1-a21e-ef0fbf144bb7",
+    )
+    try:
+        _boot(_build_app())
+    finally:
+        _anam_env(monkeypatch)
 
 
 def test_it_refuses_to_start_with_voice_enabled_and_no_voice_id(
@@ -136,34 +170,41 @@ def test_it_refuses_to_start_with_voice_enabled_and_no_voice_id(
 ) -> None:
     """An avatar with the wrong voice is worse than no avatar, and there is no
     sensible default to fall back to."""
-    monkeypatch.setenv("ANAM_ENABLED", "true")
-    monkeypatch.setenv("ANAM_VOICE_ID", "")
-    get_settings.cache_clear()
+    # A real brain id, so the guard under test is the one that fires.
+    _anam_env(
+        monkeypatch,
+        ANAM_ENABLED="true",
+        ANAM_VOICE_ID="",
+        ANAM_LLM_ID="a7cf662c-2ace-4de1-a21e-ef0fbf144bb7",
+    )
     try:
         with pytest.raises(RuntimeError, match="ANAM_VOICE_ID"):
             _boot(_build_app())
     finally:
-        for name in ("ANAM_ENABLED", "ANAM_VOICE_ID"):
-            monkeypatch.delenv(name, raising=False)
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
 
 
-def test_neither_guard_fires_when_voice_is_not_configured() -> None:
+def test_neither_guard_fires_when_voice_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     The default everywhere. Local, CI and any environment without a key must
     boot exactly as they do today.
     """
-    get_settings.cache_clear()
+    _anam_env(monkeypatch, ANAM_ENABLED="false")
     try:
         _boot(_build_app())
     finally:
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
 
 
 def test_the_anam_defaults_are_the_documented_ones() -> None:
     fields = Settings.model_fields
     assert fields["anam_enabled"].default is False
-    assert fields["anam_llm_id"].default == "CUSTOMER_CLIENT_V1"
+    # Anam's own GPT OSS 120B, attached to the Ria-rithm persona. NOT
+    # CUSTOMER_CLIENT_V1 any more — see config.py for what that trade cost.
+    assert fields["anam_llm_id"].default == "a7cf662c-2ace-4de1-a21e-ef0fbf144bb7"
+    assert fields["anam_disabled_llm_id"].default == "CUSTOMER_CLIENT_V1"
     # No default voice — see the guard above.
     assert fields["anam_voice_id"].default == ""
     # The lease must outlive the session it is advisory about.

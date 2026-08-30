@@ -2,7 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "../lib/api";
 import { qk } from "../lib/queryClient";
 import { useAuth } from "../store/auth";
-import type { ChatSessionResponse, ChatTurnResponse, SongDraft } from "../types/api";
+import type {
+  ChatSessionResponse,
+  ChatTurnResponse,
+  SongDraft,
+  VoiceTurnRecordResponse,
+} from "../types/api";
+import type { RecordedTurn } from "../lib/anam/VoiceTurnLoop";
 
 /**
  * The chat session, and the one mutation that moves it.
@@ -108,6 +114,61 @@ export function useSendChatMessage() {
           ],
           draft: turn.draft,
           ready: turn.ready,
+        };
+      });
+    },
+  });
+}
+
+/**
+ * Record turns Anam's own model already spoke.
+ *
+ * THE SAME CACHE ENTRY `useSendChatMessage` WRITES, which is the property that
+ * keeps Talk and Chat two doors on one conversation now that the two surfaces
+ * no longer share a brain. The response carries the merged draft and the
+ * readiness the server derived, so it folds straight in with `setQueryData` —
+ * an `invalidateQueries` would refetch the whole transcript to learn what the
+ * response already said.
+ *
+ * NEVER ADD A RETRY. `/chat/turns/record` has no idempotency key, so a retried
+ * timeout that actually succeeded duplicates the transcript. The
+ * QueryClient's `mutations: { retry: false }` is what stands between voice and
+ * exactly that.
+ */
+export function useRecordVoiceTurns() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (turns: RecordedTurn[]) =>
+      request<VoiceTurnRecordResponse>("/chat/turns/record", {
+        method: "POST",
+        body: JSON.stringify({ turns }),
+      }),
+    onSuccess: (recorded, turns) => {
+      queryClient.setQueryData<ChatSessionResponse>(qk.chat, (previous) => {
+        const base: ChatSessionResponse = previous ?? {
+          session_id: null,
+          messages: [],
+          draft: recorded.draft,
+          ready: recorded.ready,
+        };
+        return {
+          ...base,
+          // Reconstructed locally rather than returned. The server has no
+          // reply to send back — it did not write one — so echoing the turns
+          // we just posted would double the payload for nothing. These ids are
+          // local and never read back.
+          messages: [
+            ...base.messages,
+            ...turns.map((turn, index) => ({
+              id: `local-voice-${Date.now()}-${index}`,
+              role: turn.role,
+              content: turn.content,
+              created_at: new Date().toISOString(),
+            })),
+          ],
+          draft: recorded.draft,
+          ready: recorded.ready,
         };
       });
     },
