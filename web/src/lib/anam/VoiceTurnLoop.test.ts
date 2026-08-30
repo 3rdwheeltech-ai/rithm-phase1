@@ -264,7 +264,8 @@ describe("speaking", () => {
     await settle();
     await settle();
 
-    expect(h.client.lastStream!.chunks[0]!.text).toBe("Nice — what genre?");
+    // The dash becomes a comma: the TTS engine has no word for one.
+    expect(h.client.lastStream!.chunks[0]!.text).toBe("Nice, what genre?");
   });
 
   it("opens no talk stream for a reply that sanitises away to nothing", async () => {

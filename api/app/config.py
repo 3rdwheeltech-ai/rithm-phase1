@@ -121,6 +121,18 @@ class Settings(BaseSettings):
     chat_max_messages_per_session: int = 60  # then 409 — start a new session
     chat_max_messages_per_day: int = 200  # then 429 — the spend cap
 
+    # How long a conversation may sit untouched before the next message opens a
+    # fresh one. Read off `sessions.updated_at`, which the touch_updated_at
+    # trigger already bumps on every save_draft — so this needs no DDL and no
+    # new writer.
+    #
+    # A SETTING RATHER THAN A CONSTANT because the right number is a product
+    # judgement nobody has data for yet. Five minutes suits the voice door,
+    # where a session is capped at three minutes anyway; it is aggressive for
+    # someone composing a long message in Chat, who can lose their transcript
+    # by thinking for six minutes. Raising it is a task-definition edit.
+    chat_session_idle_seconds: int = 300
+
     # ── Anam (voice avatar) ─────────────────────────────────────────────────
     # Off by default, exactly like bedrock_enabled: local, CI and any
     # environment that has not been given a key get today's Lottie avatar and a

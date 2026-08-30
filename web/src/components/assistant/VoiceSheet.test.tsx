@@ -140,7 +140,7 @@ describe("VoiceSheet", () => {
     renderWithProviders(<VoiceSheet />);
 
     expect(
-      await screen.findByRole("region", { name: "AI assistant chat" }),
+      await screen.findByRole("region", { name: "RIA - Your AI Assistant chat" }),
     ).toBeInTheDocument();
     // Still no lens: ChatPanel renders `chrome="plain"` in here.
     const dialog = document.body.querySelector('[role="dialog"]')!;

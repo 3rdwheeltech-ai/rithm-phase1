@@ -16,9 +16,13 @@ import {
  * open with different greetings are two features again — and the voice door
  * speaks this string aloud where the chat door renders it, so a drift here is
  * a drift the user can hear.
+ *
+ * NO EM-DASH, deliberately. This is the first thing the avatar ever says, and
+ * the TTS engine has no word for one — `sanitizeForSpeech` would rewrite it to
+ * a comma anyway, so the two doors would open with different punctuation.
  */
 export const OPENING_LINE =
-  "Tell me about the song you want — a scene, a feeling, anything at all.";
+  "Tell me about the song you want. A scene, a feeling, anything at all.";
 
 /**
  * The Create form's initial state, in one place.

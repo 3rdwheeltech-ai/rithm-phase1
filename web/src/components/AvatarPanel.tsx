@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useChatSession } from "../hooks/useChat";
+import { useChatSession, useResetChat } from "../hooks/useChat";
 import { useVoiceSession } from "../hooks/useVoiceSession";
 import { useLens } from "../lib/useLens";
+import { useTypewriter } from "../lib/useTypewriter";
 import { usePrefersReducedMotion } from "../lib/useReducedMotion";
 import { mergeRefs, useSpecular } from "../lib/useSpecular";
 import { useAssistant } from "../store/assistant";
@@ -31,62 +32,23 @@ const PHRASES_PER_CYCLE = 2; // phrases shown between cursor-only gaps
  * gap, advancing through the phrase list. Falls back to a static phrase when
  * reduced motion is set.
  *
+ * The timeline itself is `useTypewriter`, shared with the Create form's lyric
+ * brief. The options below are exactly the behaviour this has always had; what
+ * moved out is the loop, not the feel.
+ *
  * Exported because `ChatPanel` reuses the caret treatment for its "thinking"
  * row: the two are the same idea, and two blinking carets that blink
  * differently is the kind of detail that reads as sloppiness without anyone
  * being able to say why.
  */
 export function StreamingPrompt({ enabled }: { enabled: boolean }) {
-  const [text, setText] = useState("");
-
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const wait = (ms: number) =>
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ms);
-      });
-    const set = (v: string) => {
-      if (!cancelled) setText(v);
-    };
-
-    async function run() {
-      let phrase = 0;
-      while (!cancelled) {
-        // Cursor-only gap.
-        set("");
-        await wait(SLOT_MS);
-
-        for (let k = 0; k < PHRASES_PER_CYCLE && !cancelled; k++) {
-          const full = PROMPTS[phrase % PROMPTS.length]!;
-          phrase++;
-          // Type it out one character at a time…
-          for (let i = 1; i <= full.length && !cancelled; i++) {
-            set(full.slice(0, i));
-            await wait(TYPE_MS);
-          }
-          // …then hold it for the remainder of the 3s slot.
-          await wait(Math.max(0, SLOT_MS - full.length * TYPE_MS));
-        }
-      }
-    }
-    void run();
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [enabled]);
-
-  if (!enabled) {
-    return (
-      <p className="mt-3 min-h-[2.5em] px-2 text-center text-sm leading-snug text-ink-muted">
-        {PROMPTS[0]}
-      </p>
-    );
-  }
-
+  const text = useTypewriter(PROMPTS, {
+    enabled,
+    typeMs: TYPE_MS,
+    slotMs: SLOT_MS,
+    phrasesPerCycle: PHRASES_PER_CYCLE,
+    gapMs: SLOT_MS,
+  });
   return (
     <p
       className="mt-3 min-h-[2.5em] px-2 text-center text-sm leading-snug text-ink-muted"
@@ -145,6 +107,7 @@ export default function AvatarPanel({
   const [comingSoon, setComingSoon] = useState<string | null>(null);
 
   const voice = useVoiceSession();
+  const reset = useResetChat();
 
   /**
    * Resume a live conversation on a reload.
@@ -209,6 +172,23 @@ export default function AvatarPanel({
     `voice.canStart` — is a cooldown running? Same treatment: disabled, with a
     reason.
   */
+  /*
+    START OVER DOES NOT HANG UP, and that was the bug.
+
+    It used to end the session and then clear, which made it do the same
+    visible thing as End — and it was DISABLED until a caption existed, so
+    pressing it in the first seconds of a call did nothing at all. That is what
+    was reported: a dead button.
+
+    Now it clears the conversation and keeps the call, with `restart`
+    re-greeting so the avatar opens again rather than sitting on a transcript
+    that no longer exists. That is what "start over" does in `ChatPanel` too:
+    the conversation resets, the door you are standing in does not close.
+
+    The mutation is owned HERE rather than in `VoiceStage` so it does not
+    depend on that component staying mounted — the stage comes and goes with
+    the session, and this panel does not.
+  */
   const voiceConfigured =
     (session?.voice_available ?? false) && voiceFailure !== "not-configured";
 
@@ -233,12 +213,14 @@ export default function AvatarPanel({
       // Named, like ChatPanel beside it. A `<section>` only becomes a landmark
       // once it has an accessible name, and the two doors should be the same
       // shape to assistive tech as they are to the eye.
-      aria-label="AI assistant"
+      aria-label="RIA - Your AI Assistant"
       className={`lg-lens relative flex flex-col items-center overflow-hidden p-4 ${className}`}
       style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
     >
-      <span className="mb-3 self-start eyebrow">
-        AI Assistant
+      {/* Named, not labelled. "AI Assistant" described a category; this is
+          the same someone the avatar shows and the voice speaks as. */}
+      <span className="mb-3 self-start eyebrow truncate">
+        RIA - Your AI Assistant
       </span>
 
       {/* Same row of the panel as in ChatPanel — see DoorToggle. */}
@@ -259,6 +241,11 @@ export default function AvatarPanel({
           suggestions={voice.suggestions}
           onSuggestion={voice.answerSuggestion}
           onEnd={voice.end}
+          onReset={() => {
+            reset.mutate();
+            voice.restart();
+          }}
+          canReset={!reset.isPending}
           onGesture={voice.retryGesture}
           className="w-full"
         />

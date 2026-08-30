@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useRef } from "react";
 import { ArrowRight, RotateCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/cn";
@@ -6,7 +6,7 @@ import { ANAM_VIDEO_ELEMENT_ID } from "../../lib/anam/types";
 import { usePrefersReducedMotion } from "../../lib/useReducedMotion";
 import { mergeRefs } from "../../lib/useSpecular";
 import { useAssistant, type VoicePhase, type VoiceStatus } from "../../store/assistant";
-import { EMPTY_DRAFT, useChatSession, useResetChat } from "../../hooks/useChat";
+import { EMPTY_DRAFT, useChatSession } from "../../hooks/useChat";
 
 /**
  * The avatar, the captions and the clock — inside `AvatarPanel`'s EXISTING lens.
@@ -69,16 +69,39 @@ const VoiceStage = forwardRef<
     suggestions: string[];
     onSuggestion: (suggestion: string) => void;
     onEnd: () => void;
+    /**
+     * Start over: end the session, then clear the conversation.
+     *
+     * A PROP RATHER THAN A MUTATION IN HERE, and that is the bug fix. Ending
+     * the session flips `AvatarPanel`'s `onStage` and unmounts this component
+     * in the same commit, so a `useResetChat` owned here fired its DELETE and
+     * then lost the `onSuccess` that clears `qk.chat` — the server forgot the
+     * conversation and the screen did not. The owner has to outlive the
+     * teardown, and the panel does.
+     */
+    onReset: () => void;
+    /** False when there is no conversation to start over from. */
+    canReset: boolean;
     onGesture: () => void;
     className?: string;
   }
 >(function VoiceStage(
-  { captions, pendingTranscript, suggestions, onSuggestion, onEnd, onGesture, className },
+  {
+    captions,
+    pendingTranscript,
+    suggestions,
+    onSuggestion,
+    onEnd,
+    onReset,
+    canReset,
+    onGesture,
+    className,
+  },
   videoRef,
 ) {
   const reduceMotion = usePrefersReducedMotion();
   const nav = useNavigate();
-  const reset = useResetChat();
+  const logRef = useRef<HTMLDivElement>(null);
   // The same cache entry ChatPanel reads, so neither door derives `ready` for
   // itself and the two can never disagree about when Create opens.
   const { data: session } = useChatSession();
@@ -87,6 +110,22 @@ const VoiceStage = forwardRef<
   const status = useAssistant((s) => s.voiceStatus);
   const phase = useAssistant((s) => s.voicePhase);
   const remainingMs = useAssistant((s) => s.voiceRemainingMs);
+
+  /*
+    Follow the conversation. Without this the log filled past its 132px and
+    stopped there, so every line after the fourth needed a manual scroll — in a
+    surface where the user's hands are nowhere near the mouse because they are
+    talking.
+
+    `scrollTop = scrollHeight` rather than `scrollIntoView`, for the reason
+    ChatPanel's own copy of this gives: `scrollIntoView` walks up to the
+    nearest scrollable ancestor and would move the page's column when the
+    transcript is already at its end.
+  */
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [captions.length, pendingTranscript]);
 
   const connecting = status === "checking" || status === "connecting";
   const showCountdown = status === "live" && remainingMs > 0 && remainingMs <= WARN_AT_MS;
@@ -168,6 +207,7 @@ const VoiceStage = forwardRef<
         without a live region of its own.
       */}
       <div
+        ref={logRef}
         role="log"
         aria-label="Voice transcript"
         className="scroll-plain mt-3 flex max-h-[132px] min-h-[44px] flex-col gap-1.5 overflow-y-auto pr-1"
@@ -261,11 +301,9 @@ const VoiceStage = forwardRef<
         decode are all compositing at once. One fewer context, and it is the
         correct control anyway.
 
-        Start over ENDS THE SESSION FIRST. Clearing the transcript under a live
-        avatar would leave Ria mid-sentence about a conversation that no longer
-        exists — and it releases the product's one global Anam slot rather than
-        holding it for a call whose whole subject was just deleted. Sized and
-        styled off `ChatPanel`'s header pair so the two doors read the same.
+        Start over ends the session first — see `onReset`, which owns both
+        halves from a component that survives the teardown. Sized and styled
+        off `ChatPanel`'s header pair so the two doors read the same.
       */}
       <div className="mt-3 flex w-full items-center gap-2">
         <button
@@ -277,11 +315,8 @@ const VoiceStage = forwardRef<
         </button>
         <button
           type="button"
-          onClick={() => {
-            onEnd();
-            reset.mutate();
-          }}
-          disabled={reset.isPending || captions.length === 0}
+          onClick={onReset}
+          disabled={!canReset}
           title="Start over"
           aria-label="Start over"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-white/10 text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-30"

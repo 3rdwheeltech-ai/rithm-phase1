@@ -55,6 +55,16 @@ export interface VoiceSession {
   end: () => void;
   /** The "Tap to start" fallback, which is a fresh user gesture. */
   retryGesture: () => void;
+  /**
+   * Start over WITHOUT hanging up: forget what was said, keep the call.
+   *
+   * The caller clears the conversation server-side; this clears what is on
+   * screen and has the avatar open again, so the two halves of "start over"
+   * land together. Ending the session is `end`, and keeping them separate is
+   * the point — two controls that both hang up is one control and a bug
+   * report.
+   */
+  restart: () => void;
   answerSuggestion: (text: string) => void;
   /** False while a cooldown is running, or where the browser cannot do voice. */
   canStart: boolean;
@@ -343,6 +353,21 @@ export function useVoiceSession(): VoiceSession {
       .catch(() => teardown("video-never-played"));
   }, [setVoiceStatus, teardown]);
 
+  /**
+   * Wipe the conversation and re-greet, with the session still up.
+   *
+   * `greet` is the loop's existing entry point for speaking a line it did not
+   * produce, so this needs nothing new from it. `OPENING_LINE` rather than the
+   * last assistant turn, deliberately: the transcript this would have resumed
+   * from is exactly what the caller just deleted.
+   */
+  const restart = useCallback(() => {
+    setCaptions([]);
+    setSuggestions([]);
+    setPendingTranscript(null);
+    loopRef.current?.greet(OPENING_LINE);
+  }, []);
+
   const answerSuggestion = useCallback(
     (text: string) => {
       setSuggestions([]);
@@ -404,6 +429,7 @@ export function useVoiceSession(): VoiceSession {
     start,
     end,
     retryGesture,
+    restart,
     answerSuggestion,
     canStart,
     supported,

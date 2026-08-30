@@ -147,7 +147,7 @@ export default function ChatPanel({
   return (
     <section
       ref={lens ? mergeRefs(lensRef, specularRef, panelRef) : panelRef}
-      aria-label="AI assistant chat"
+      aria-label="RIA - Your AI Assistant chat"
       className={cn(
         "relative flex flex-col overflow-hidden p-4",
         lens ? "lg-lens" : "surface rounded-card",
@@ -157,7 +157,7 @@ export default function ChatPanel({
     >
       <header className="mb-3 flex shrink-0 items-center gap-2">
         <AssistantAvatar variant="chip" className="h-8 w-8" />
-        <span className="eyebrow flex-1 truncate">AI Assistant</span>
+        <span className="eyebrow flex-1 truncate">RIA - Your AI Assistant</span>
 
         <button
           type="button"

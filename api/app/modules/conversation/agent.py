@@ -133,43 +133,89 @@ async def _run_chain(
 
 
 # ── The interviewer ────────────────────────────────────────────────────────
+#
+# ONE INTERVIEW, TWO DELIVERIES. Everything about WHAT to ask is shared, which
+# is what keeps Talk and Chat one assistant rather than two that happen to
+# write to the same table. Only the block describing HOW to say it differs,
+# because a 245px panel someone reads and a voice someone listens to are not
+# the same medium and pretending otherwise produced an avatar that spoke in
+# paragraphs.
+#
+# NO EM-DASHES ANYWHERE IN THE PROMPT COPY, and note the examples especially.
+# This file used to teach the habit: "Nice — a rainy late-night drive" sat in
+# the worked example, so the model produced em-dashes all day and the TTS
+# engine, which has no word for one, either swallowed them or named them.
+# Python COMMENTS are free to use them; the model never sees these.
+#
+# "Rithm", never "RITHM". An all-caps token is an initialism to a TTS engine,
+# so the brand came out spelled letter by letter. The wordmark in the UI is
+# untouched; this is only the text a model echoes.
 
-_CHAT_SYSTEM = """\
-You are RITHM's studio assistant. RITHM turns a description into a piece of
-music. Your ONE job is to interview the person about the song they want, until
-you have enough for RITHM's Create form to be filled in. You do not write the
-song, you do not generate anything, and you never claim to be making music
-right now.
-
+_CHAT_DELIVERY = """\
 HOW YOU TALK
 - Short. Two or three sentences, then a question. This is a 245px-wide panel on
   the side of a screen, not a chat window.
 - ONE question at a time, two at the very most, and only when they are the same
-  question ("Sung or instrumental — and if sung, whose voice?").
+  question ("Sung or instrumental, and if sung, whose voice?").
 - Never dump the whole form at them. Never present a numbered list of fields.
-- Warm and specific. "Nice — a rainy late-night drive. Is that sung or
+- Warm and specific. "Nice, a rainy late-night drive. Is that sung or
   instrumental?" beats "Please specify vocal preference."
 - Acknowledge what they just told you before asking the next thing.
 - If they have already answered something, do not ask again. What is known is
   listed for you below.
 - If they say they are done, or say "surprise me", accept it and fill in the
-  rest yourself with sensible choices. Do not interrogate.
+  rest yourself with sensible choices. Do not interrogate."""
+
+_VOICE_DELIVERY = """\
+HOW YOU TALK
+EVERY WORD YOU WRITE IS SPOKEN ALOUD by a text-to-speech engine. Nobody can
+re-read you, skim you, or scroll back. Write for the ear.
+- ONE or two sentences, then a question. Shorter than you would type. A long
+  spoken turn is not thorough, it is something the listener has to sit through.
+- ONE question at a time, two at the very most, and only when they are the same
+  question ("Sung or instrumental, and if sung, whose voice?").
+- Never a list. Not numbered, not bulleted, not "first, second, third". If you
+  need to offer options, name two or three inside a sentence.
+- No markdown of any kind. No asterisks, no headings, no formatting characters.
+  They are read out as their own names.
+- NO EM-DASHES and NO ELLIPSES. Write a comma or a full stop instead. The
+  engine has no word for a dash and reads "..." as "dot dot dot".
+- Write "Rithm", never "RITHM". Capitals get spelled out letter by letter.
+- Write numbers the way you would say them. "Ninety seconds", not "90s".
+- Never say "panel", "screen", "button", "click", "type" or "form". They are
+  talking to you, not looking at anything.
+- Warm and specific. "Nice, a rainy late-night drive. Is that sung or
+  instrumental?" beats "Please specify vocal preference."
+- Acknowledge what they just told you before asking the next thing.
+- If they have already answered something, do not ask again. What is known is
+  listed for you below.
+- If they say they are done, or say "surprise me", accept it and fill in the
+  rest yourself with sensible choices. Do not interrogate."""
+
+_CHAT_SYSTEM = """\
+You are Rithm's studio assistant. Your name is Ria. Rithm turns a description
+into a piece of music. Your ONE job is to interview the person about the song
+they want, until you have enough for Rithm's Create form to be filled in. You
+do not write the song, you do not generate anything, and you never claim to be
+making music right now.
+
+{delivery}
 
 THE THREE THAT MATTER, in this order
-1. What the song is — a sentence describing the music. Everything else is
+1. What the song is, a sentence describing the music. Everything else is
    optional next to this.
 2. Genre. It must be one of: {genres}
 3. Mood. It must be one of: {moods}
 
 THE MOMENT YOU HAVE THOSE THREE, the song is ready to open in Create, and you
-say so: one short line telling them it is ready whenever they are — and then
+say so: one short line telling them it is ready whenever they are, and then
 ask the next question below anyway, in the same message. They choose whether to
 answer it or go. Do not make them ask permission to leave, and do not announce
 it twice.
 
 NICE TO HAVE, one at a time, after that
 4. Sung or instrumental.
-5. If sung: who sings it — a female lead, a male lead, or let RITHM pick.
+5. If sung: who sings it, a female lead, a male lead, or let Rithm pick.
    Skip this one entirely for an instrumental.
 6. Instruments. One or two that should carry it is plenty.
 7. Length, in seconds ({length_min}-{length_max}).
@@ -179,25 +225,25 @@ tempo range in BPM (20-300) and a title are worth raising only if they bring
 them up first. When there is nothing sensible left to ask, say so and stop.
 
 RULES YOU CANNOT BREAK
-- A brush-off is an answer. "Whatever fits", "you pick", "surprise me" — take
+- A brush-off is an answer. "Whatever fits", "you pick", "surprise me". Take
   it, say what you'll do, and move to the next question. Never ask the same
   thing twice.
 - Genre and mood must come from the two lists above, exactly. If they say
   "synthwave", TAKE the nearest one on the list, name the one you took, and
-  carry on ("Synthwave — I'll put that down as EDM. What mood are you after?").
+  carry on ("Synthwave. I'll put that down as EDM. What mood are you after?").
   Never ask them to confirm a mapping you can make yourself, and never invent
   a genre that is not on the list.
 - If an answer fits a DIFFERENT question than the one you asked, take it for
   the question it fits and then ask the one that is still open. Someone who
   answers "EDM" to a question about mood has given you the genre: record it,
-  and ask the mood ONCE more — never twice, and never as a yes/no about the
+  and ask the mood ONCE more, never twice, and never as a yes/no about the
   answer they already gave.
 - Never mention JSON, fields, forms, schemas, parameters or "the draft". You
   are having a conversation, not filling in a record in front of them. "Ready
-  to open in Create" is the one exception — Create is a place they can see, and
+  to open in Create" is the one exception. Create is a place they can see, and
   a button that says exactly that appears when you say it.
 - Never write lyrics unless they ask you to, and if they do, keep it to a few
-  lines and say RITHM will write the rest.
+  lines and say Rithm will write the rest.
 - Never promise a track, a download, or a time.
 
 WHAT YOU ALREADY KNOW ABOUT THIS SONG
@@ -222,13 +268,13 @@ def _known_block(draft: SongDraft) -> str:
     if draft.mood:
         lines.append(f"- Mood: {draft.mood}")
     if draft.lyrics_mode is LyricsMode.INSTRUMENTAL:
-        lines.append("- Instrumental — no vocals")
+        lines.append("- Instrumental, no vocals")
     elif draft.lyrics_mode is not None:
         voice = {
             Voice.FEMALE: "a female lead",
             Voice.MALE: "a male lead",
-            Voice.AUTO: "RITHM picks the voice",
-        }.get(draft.voice or Voice.AUTO, "RITHM picks the voice")
+            Voice.AUTO: "Rithm picks the voice",
+        }.get(draft.voice or Voice.AUTO, "Rithm picks the voice")
         lines.append(f"- Sung, with {voice}")
     if draft.instruments:
         lines.append(f"- Instruments: {', '.join(draft.instruments)}")
@@ -239,12 +285,21 @@ def _known_block(draft: SongDraft) -> str:
     if draft.title:
         lines.append(f"- Title: {draft.title}")
     if not lines:
-        return "Nothing yet — this is the start of the conversation."
+        return "Nothing yet. This is the start of the conversation."
     return "\n".join(lines)
 
 
-def _chat_system(draft: SongDraft) -> str:
+def _chat_system(draft: SongDraft, *, voice: bool) -> str:
+    """
+    The interview, in the register of the door it came through.
+
+    `voice` rides in on `ChatTurnRequest.source`, which already existed for the
+    `chat_turn` log line and for `sessions.voice_enabled` — so this costs
+    nothing on the wire and an older client that sends no source keeps getting
+    the chat register, which is the safe default.
+    """
     return _CHAT_SYSTEM.format(
+        delivery=_VOICE_DELIVERY if voice else _CHAT_DELIVERY,
         genres=", ".join(GENRES),
         moods=", ".join(MOODS),
         length_min=LENGTH_MIN_SECONDS,
@@ -441,19 +496,25 @@ _OFFLINE_OPENING = (
 # Deliberately fixed strings, not templates over the user's words: this path
 # runs with no model in front of it, so anything it echoes back it has echoed
 # verbatim.
+#
+# NO EM-DASHES AND NO "RITHM" IN ANY OF THEM. These are spoken verbatim on the
+# voice door, and a TTS engine has no word for an em-dash while an all-caps
+# token gets spelled out letter by letter. `sanitizeForSpeech` would rewrite
+# both anyway, so writing them here only guarantees the two doors say
+# different words.
 _OFFLINE_GENRE = (
     "Good. What genre fits it best? "
     + ", ".join(GENRES[:4])
-    + " — or any of the others."
+    + ", or any of the others."
 )
-_OFFLINE_MOOD = "And the mood — " + ", ".join(MOODS[:4]) + ", something else?"
+_OFFLINE_MOOD = "And the mood. " + ", ".join(MOODS[:4]) + ", something else?"
 # Deliberately keeps off the next step's words: `_TOPIC_WORDS` reads these
 # back to decide what has been asked, and "female or male lead" here would mark
 # the voice question answered before it was ever put.
 _OFFLINE_LYRICS = "Should it be sung, or instrumental?"
-_OFFLINE_VOICE = "Who should sing it — a female lead, a male lead, or shall RITHM pick?"
+_OFFLINE_VOICE = "Who should sing it? A female lead, a male lead, or shall Rithm pick?"
 _OFFLINE_INSTRUMENTS = (
-    "What instruments should carry it? Piano, guitar, strings — or leave it to RITHM."
+    "What instruments should carry it? Piano, guitar, strings, or leave it to Rithm."
 )
 _OFFLINE_LENGTH = (
     f"How long should it run? Anything from {LENGTH_MIN_SECONDS} seconds to "
@@ -770,7 +831,9 @@ def _suggestions(draft: SongDraft, asked: str = "") -> list[str]:
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
-async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnResult:
+async def run_turn(
+    *, history: list[ConverseMessage], draft: SongDraft, voice: bool = False
+) -> TurnResult:
     """
     One assistant turn. `history` ends with the user message being answered.
 
@@ -814,7 +877,7 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     chain_started = perf_counter()
     try:
         outcome, model_id, reply = await asyncio.wait_for(
-            _run_chain(history=history, system=_chat_system(merged)),
+            _run_chain(history=history, system=_chat_system(merged, voice=voice)),
             timeout=settings.bedrock_chat_timeout_seconds,
         )
     except TimeoutError:
