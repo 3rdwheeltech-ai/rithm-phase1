@@ -249,9 +249,44 @@ describe("speaking", () => {
     await settle();
 
     const stream = h.client.lastStream!;
-    expect(stream.chunks.map((c) => c.text)).toEqual(["Nice one.", "What mood?"]);
+    // THE SPACE AFTER "Nice one." IS THE ASSERTION. This test used to expect
+    // ["Nice one.", "What mood?"] and so encoded a real bug as the expected
+    // result: the SDK concatenates chunks verbatim, so the engine was handed
+    // "Nice one.What mood?" and read the full stop out loud as "dot".
+    expect(stream.chunks.map((c) => c.text)).toEqual(["Nice one. ", "What mood?"]);
     expect(stream.chunks.map((c) => c.endOfSpeech)).toEqual([false, true]);
     expect(stream.endCount).toBe(1);
+  });
+
+  it("hands the engine back exactly the text it was given", async () => {
+    /*
+      THE INVARIANT, rather than a shape.
+
+      Chunking is an implementation detail of how the reply reaches the engine;
+      what the LISTENER gets is the concatenation, because `streamMessageChunk`
+      is a token-stream api that joins with nothing. So the property worth
+      pinning is that the join round-trips — whatever the splitting does.
+
+      Asserting the chunk ARRAY is what let the missing space live here for
+      three releases: the array looked perfectly reasonable.
+    */
+    const h = harness({ hold: true });
+    const answer =
+      "Got it, a piece about rainfall. You mentioned it should be calm and " +
+      "instrumental. Now, what genre would you like?";
+
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "rain")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply(answer));
+    await settle();
+    await settle();
+
+    const spoken = h.client.lastStream!.chunks.map((c) => c.text).join("");
+    expect(spoken).toBe(answer);
+    // The specific shape that made it say "dot": a full stop welded to the
+    // next capital with no space between them.
+    expect(spoken).not.toMatch(/[.!?][A-Z]/);
   });
 
   it("sanitises the reply before it is spoken", async () => {

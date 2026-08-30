@@ -323,9 +323,25 @@ export class VoiceTurnLoop {
       // `createTalkMessageStream` safe here despite holding the whole string.
       // Do NOT pace this for effect: pacing buys nothing we do not already
       // have, and introduces the one gap that can kill the stream.
-      sentences.forEach((sentence, i) =>
-        stream.streamMessageChunk(sentence, i === sentences.length - 1),
-      );
+      //
+      // THE TRAILING SPACE IS LOAD-BEARING. Do not "tidy" it away.
+      //
+      // `streamMessageChunk` is a TOKEN-STREAM api: it exists to be fed an
+      // LLM's output as it arrives, and an LLM's tokens carry their own leading
+      // whitespace, so the SDK concatenates what it is given verbatim.
+      // `splitSentences` splits ON the whitespace between sentences, which
+      // means it consumes it — so without this, the engine received
+      // "…about rainfall.You mentioned…" with no space after the full stop.
+      //
+      // A period between two word characters with no space is the shape of a
+      // domain or a filename, and a TTS engine normalises that by SAYING the
+      // period: "rainfall dot You". Every sentence boundary in every reply,
+      // read out loud. It was reported twice before anyone found it here,
+      // because it looks like a speech-engine problem and is entirely ours.
+      sentences.forEach((sentence, i) => {
+        const last = i === sentences.length - 1;
+        stream.streamMessageChunk(last ? sentence : `${sentence} `, last);
+      });
     } finally {
       // Ended HERE and nulled in the same breath, so `endMessage` is called
       // exactly once per utterance. An interruption arriving afterwards finds
