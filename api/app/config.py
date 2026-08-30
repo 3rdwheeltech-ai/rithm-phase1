@@ -162,33 +162,23 @@ class Settings(BaseSettings):
     anam_voice_id: str = ""
     anam_persona_name: str = "Rithm"
 
-    # WHICH BRAIN ANSWERS ON THE VOICE SURFACE. This was CUSTOMER_CLIENT_V1 —
-    # Anam's "Disable LLM", which left it as ears and mouth only while
-    # agent.py did the interviewing. It is now Anam's own GPT OSS 120B
-    # (openai/gpt-oss-120b, via Groq), attached to the Ria-rithm persona.
+    # The magic value that turns Anam's own brain OFF and leaves STT + TTS on.
+    # NOT a model id. Anam's LLM answering instead of ours is a SILENT failure:
+    # the reply never reaches /chat/messages, the draft never moves, and the
+    # Chat door shows a transcript with a hole in it. main.py refuses to boot
+    # if this is anything else.
     #
-    # The reason is latency and nothing else. The old path was two SEQUENTIAL
-    # Bedrock calls — nova-micro extraction, then Claude Haiku — with the FULL
-    # reply generated before the avatar spoke a single word. Anam streams its
-    # own model straight into its own TTS, so the first word lands in a
-    # fraction of the time.
+    # THIS WAS TRIED THE OTHER WAY AND REVERTED. Pointing it at Anam's own
+    # GPT OSS 120B did cut the latency, and the conversation was unusable: it
+    # ran to a minute of scene-painting per turn against our 400-token cap
+    # (that model is global, at maxTokens 4096, and not ours to lower), and a
+    # 2,816-word Lab prompt did not hold it.
     #
-    # WHAT THIS COSTS, stated plainly because it is not recoverable from the
-    # code: the interview prompt now lives in the Anam Lab console rather than
-    # in git, so it is unreviewed and changeable by anyone with dashboard
-    # access; and the closed genre/mood vocabularies are no longer guaranteed
-    # in CONVERSATION. They are still enforced on the way into the draft —
-    # conversation/api.py's record path runs agent.py's extractor over every
-    # user turn — so the RECORD stays correct even when the talk wanders.
-    #
-    # Setting this back to CUSTOMER_CLIENT_V1 without restoring the client-side
-    # reply path leaves NOBODY answering and a mute avatar. main.py refuses to
-    # boot on exactly that, which is the old guard turned around.
-    anam_llm_id: str = "a7cf662c-2ace-4de1-a21e-ef0fbf144bb7"
-
-    # The value that used to live in anam_llm_id, kept as a named constant
-    # because the boot guard and the tests both need to say it.
-    anam_disabled_llm_id: str = "CUSTOMER_CLIENT_V1"
+    # The part no prompt could fix is that a vendor model CANNOT SEE THE DRAFT.
+    # `_chat_system(merged)` rebuilds the system prompt from the current draft
+    # every turn — it is how the interviewer knows what it already has and
+    # stops asking twice. That state lives here, so the interviewer has to.
+    anam_llm_id: str = "CUSTOMER_CLIENT_V1"
 
     # The FREE tier's shape, as settings rather than as magic numbers. The SPA's
     # countdown runs off what the API returns, so changing the plan is a

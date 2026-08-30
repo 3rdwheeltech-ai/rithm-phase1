@@ -28,6 +28,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from time import perf_counter
 
 import structlog
 from pydantic import ValidationError
@@ -108,7 +109,15 @@ async def _run_chain(
             model_id=model_id,
             system=system,
             messages=history,
-            max_tokens=400,
+            # A CEILING, NOT A TARGET — and worth being clear about, because
+            # it is easy to read as a latency fix and it is not. A reply that
+            # was already going to be 60 tokens takes exactly as long under
+            # either cap; this only bites the pathological turn. That turn is
+            # real though: the persona is specified as "two or three sentences,
+            # then a question", and 400 tokens is roughly 300 words — licence
+            # to monologue that nothing else takes away. Anam's own model ran
+            # at 4096 and did exactly that for a minute at a time.
+            max_tokens=160,
             temperature=0.7,
             read_timeout=settings.bedrock_chat_read_timeout_seconds,
         )
@@ -761,50 +770,6 @@ def _suggestions(draft: SongDraft, asked: str = "") -> list[str]:
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class RecordResult:
-    """What extraction learned from a turn somebody else conducted."""
-
-    delta: SongDraft
-    draft: SongDraft
-    ready: bool
-
-
-async def record_turn(*, draft: SongDraft, user_text: str, asked: str) -> RecordResult:
-    """
-    Advance the draft from a turn this module did NOT produce.
-
-    `run_turn` does two things: it extracts the draft, then it writes the
-    reply. Since the avatar answers with Anam's own model, only the first half
-    is still ours — so this is `run_turn` with the chain removed, and
-    deliberately not a flag on `run_turn` itself. The two have different
-    failure modes (this one cannot 503, because there is no reply to lose) and
-    fusing them would put an `if` around the most important call in the file.
-
-    IT IS THE ONLY THING KEEPING THE FEATURE HONEST. Anam produces conversation;
-    this produces the validated record — genre from the closed list, mood from
-    the closed list, tempo in bounds — that pre-fills Create. A vendor model
-    wandering off-vocabulary in conversation is survivable precisely because
-    the value that lands here went through `SongDraft` validation on the way.
-
-    NEVER RAISES. A failed extraction returns the draft untouched, exactly as
-    `run_turn` treats it: the transcript is already committed and losing the
-    turn over a missed field would be the worse trade.
-    """
-    delta = await _extract(draft=draft, user_text=user_text, asked=asked)
-
-    # The offline interviewer's parse, on the same terms `run_turn` uses it:
-    # with Bedrock off, `_extract` returns an empty draft that is
-    # indistinguishable from "nothing learned", so the flag is what has to be
-    # read. This is what lets `docker compose up` with no AWS credentials still
-    # fill the form from a voice conversation.
-    if not get_settings().bedrock_enabled:
-        delta = _offline_delta(user_text=user_text, draft=draft)
-
-    merged = draft.merged_with(delta)
-    return RecordResult(delta=delta, draft=merged, ready=draft_is_ready(merged))
-
-
 async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnResult:
     """
     One assistant turn. `history` ends with the user message being answered.
@@ -835,9 +800,18 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     # A no-op when Bedrock is off — `_extract` reads DISABLED off the transport
     # the same way `_run_chain` does, and returns an empty draft. The offline
     # interviewer below parses the message itself.
+    # TIMED, because until now nothing was. `chat_turn` carries a comment
+    # claiming CloudWatch can answer "how much of our traffic is voice, and is
+    # it slower?" and it could not: there was no duration on any line in this
+    # module. A voice turn is two SEQUENTIAL model calls and the user waits for
+    # both before hearing a word, so which of the two dominates is the whole
+    # question — and it was being guessed at rather than read.
+    extract_started = perf_counter()
     delta = await _extract(draft=draft, user_text=user_text, asked=asked)
+    extract_ms = round((perf_counter() - extract_started) * 1000)
     merged = draft.merged_with(delta)
 
+    chain_started = perf_counter()
     try:
         outcome, model_id, reply = await asyncio.wait_for(
             _run_chain(history=history, system=_chat_system(merged)),
@@ -874,11 +848,19 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
         logger.warning("chat_chain_exhausted", models=len(settings.chat_model_ids))
         raise AssistantUnavailableException()
 
+    chain_ms = round((perf_counter() - chain_started) * 1000)
     logger.info(
         "chat_turn_complete",
         model_id=model_id,
         reply_chars=len(reply),
         ready=draft_is_ready(merged),
+        # The two halves separately, because the fix differs. Time in the chain
+        # is answered by streaming the reply — the avatar could start on
+        # sentence one instead of waiting for the last. Time in extraction is
+        # answered by a smaller model or by not blocking the reply on it.
+        extract_ms=extract_ms,
+        chain_ms=chain_ms,
+        total_ms=extract_ms + chain_ms,
     )
     return TurnResult(
         reply=reply.strip(),

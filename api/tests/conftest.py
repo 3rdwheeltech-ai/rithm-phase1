@@ -241,10 +241,6 @@ class FakeResult:
         """Mirrors SQLAlchemy: first column of the single row."""
         return self._rows[0][0]
 
-    def scalar_one_or_none(self) -> Any:
-        """Mirrors SQLAlchemy: the same, or None when nothing matched."""
-        return self._rows[0][0] if self._rows else None
-
     def mappings(self) -> "FakeResult":
         return self
 

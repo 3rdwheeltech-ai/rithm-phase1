@@ -48,12 +48,14 @@ const QUOTA_COOLDOWN_MS = 15 * 60_000;
 export interface VoiceSession {
   captions: VoiceCaption[];
   pendingTranscript: string | null;
+  suggestions: string[];
   videoRef: React.RefObject<HTMLVideoElement>;
   /** Press Talk. SYNCHRONOUS on purpose — see the body. */
   start: () => void;
   end: () => void;
   /** The "Tap to start" fallback, which is a fresh user gesture. */
   retryGesture: () => void;
+  answerSuggestion: (text: string) => void;
   /** False while a cooldown is running, or where the browser cannot do voice. */
   canStart: boolean;
   supported: boolean;
@@ -62,7 +64,7 @@ export interface VoiceSession {
 let captionSeq = 0;
 
 export function useVoiceSession(): VoiceSession {
-  const recordTurns = useVoiceTurn();
+  const runTurn = useVoiceTurn();
   const { data: session } = useChatSession();
 
   const setMode = useAssistant((s) => s.setMode);
@@ -76,6 +78,7 @@ export function useVoiceSession(): VoiceSession {
 
   const [captions, setCaptions] = useState<VoiceCaption[]>([]);
   const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const loopRef = useRef<VoiceTurnLoop | null>(null);
@@ -178,6 +181,7 @@ export function useVoiceSession(): VoiceSession {
     usePlayer.getState().setPlaying(false);
 
     setCaptions([]);
+    setSuggestions([]);
     setPendingTranscript(null);
     setVoiceStatus("checking");
     void begin();
@@ -222,7 +226,7 @@ export function useVoiceSession(): VoiceSession {
 
       const loop = new VoiceTurnLoop({
         client,
-        recordTurns,
+        runTurn,
         onPhase: setVoicePhase,
         onUserTranscript: (text) => {
           setPendingTranscript(null);
@@ -231,12 +235,8 @@ export function useVoiceSession(): VoiceSession {
             { id: `u${(captionSeq += 1)}`, role: "user", text },
           ]);
         },
-        // The second argument is always empty now and the signature keeps it
-        // only so the loop's contract does not change shape twice. Chips were
-        // generated against the assistant's OWN reply, server-side; Anam writes
-        // that reply now, so there is nothing to generate them from without a
-        // model call that would hand back the latency this switch bought.
-        onAssistantReply: (text) => {
+        onAssistantReply: (text, replySuggestions) => {
+          setSuggestions(replySuggestions);
           setCaptions((rows) => [
             ...rows,
             { id: `a${(captionSeq += 1)}`, role: "assistant", text },
@@ -319,7 +319,7 @@ export function useVoiceSession(): VoiceSession {
   }, [
     canStart,
     status,
-    recordTurns,
+    runTurn,
     onEnd,
     teardown,
     failVoice,
@@ -342,6 +342,15 @@ export function useVoiceSession(): VoiceSession {
       .then(() => setVoiceStatus("live"))
       .catch(() => teardown("video-never-played"));
   }, [setVoiceStatus, teardown]);
+
+  const answerSuggestion = useCallback(
+    (text: string) => {
+      setSuggestions([]);
+      setPendingTranscript(text);
+      void runTurn(text);
+    },
+    [runTurn],
+  );
 
   const live = status !== "idle" && status !== "unavailable";
 
@@ -390,10 +399,12 @@ export function useVoiceSession(): VoiceSession {
   return {
     captions,
     pendingTranscript,
+    suggestions,
     videoRef,
     start,
     end,
     retryGesture,
+    answerSuggestion,
     canStart,
     supported,
   };

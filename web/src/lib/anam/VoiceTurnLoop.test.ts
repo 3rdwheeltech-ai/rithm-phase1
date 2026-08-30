@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  VoiceTurnLoop,
-  type RecordedTurn,
-  type VoiceRecordOutcome,
-} from "./VoiceTurnLoop";
+import { VoiceTurnLoop, type VoiceTurnOutcome } from "./VoiceTurnLoop";
 import { ANAM_EVENT, FakeAnamClient, personaMessage, userMessage } from "./fakeClient";
 import type { VoicePhase } from "../../store/assistant";
 
@@ -15,13 +11,6 @@ import type { VoicePhase } from "../../store/assistant";
  * suite's idiom carried over. It also lets us drive orderings a real SDK would
  * never reproduce on demand — an interruption arriving mid-speech, a history
  * event re-firing with the same ids, a close during a talk stream.
- *
- * WHAT THESE TESTS ARE ABOUT NOW. The loop used to hear a person, ask RITHM's
- * interviewer and speak the answer. Anam's own model answers, so it hears a
- * person, hears the PERSONA, and records both. The single largest change is
- * that a persona row is no longer an echo to be dropped — it is the only copy
- * of Anam's reply that will ever exist, and losing it means Chat shows a
- * transcript with holes in it.
  */
 
 const DEBOUNCE_MS = 300;
@@ -29,38 +18,39 @@ const DEBOUNCE_MS = 300;
 interface Harness {
   client: FakeAnamClient;
   loop: VoiceTurnLoop;
-  /** One entry per POST, each the batch of turns it carried. */
-  sent: RecordedTurn[][];
+  sent: string[];
   phases: VoicePhase[];
   transcripts: string[];
   replies: string[];
   ends: string[];
-  /** Every recorded turn, flattened to "role:content" for readable assertions. */
-  lines: () => string[];
-  /** Resolve the record currently held open. */
-  release: (outcome?: VoiceRecordOutcome) => void;
+  /** Resolve the turn currently held open. */
+  release: (outcome?: VoiceTurnOutcome) => void;
+}
+
+function reply(text: string, suggestions: string[] = []): VoiceTurnOutcome {
+  return { kind: "reply", text, suggestions };
 }
 
 function harness(options: { hold?: boolean } = {}): Harness {
   const client = new FakeAnamClient();
-  const sent: RecordedTurn[][] = [];
+  const sent: string[] = [];
   const phases: VoicePhase[] = [];
   const transcripts: string[] = [];
   const replies: string[] = [];
   const ends: string[] = [];
 
-  let resolve: ((outcome: VoiceRecordOutcome) => void) | null = null;
+  let resolve: ((outcome: VoiceTurnOutcome) => void) | null = null;
 
   const loop = new VoiceTurnLoop({
     client,
-    recordTurns: (turns) => {
-      sent.push(turns);
+    runTurn: (text) => {
+      sent.push(text);
       if (options.hold === true) {
-        return new Promise<VoiceRecordOutcome>((r) => {
+        return new Promise<VoiceTurnOutcome>((r) => {
           resolve = r;
         });
       }
-      return Promise.resolve<VoiceRecordOutcome>({ kind: "recorded" });
+      return Promise.resolve(reply(`Answer to ${text}`));
     },
     onPhase: (phase) => phases.push(phase),
     onUserTranscript: (text) => transcripts.push(text),
@@ -78,8 +68,7 @@ function harness(options: { hold?: boolean } = {}): Harness {
     transcripts,
     replies,
     ends,
-    lines: () => sent.flat().map((turn) => `${turn.role}:${turn.content}`),
-    release: (outcome = { kind: "recorded" }) => resolve?.(outcome),
+    release: (outcome = reply("held")) => resolve?.(outcome),
   };
 }
 
@@ -99,7 +88,7 @@ afterEach(() => {
 });
 
 describe("hearing", () => {
-  it("records each turn once even though the event carries the whole history", async () => {
+  it("sends one turn per utterance even though the event carries the whole history", async () => {
     const h = harness();
 
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "a rainy drive")]);
@@ -114,56 +103,22 @@ describe("hearing", () => {
     vi.advanceTimersByTime(DEBOUNCE_MS);
     await settle();
 
-    // Without the `dispatched` guard, batch two resends turn one.
-    expect(h.lines()).toEqual([
-      "user:a rainy drive",
-      "assistant:Nice one.",
-      "user:lo-fi",
-    ]);
+    // Without the `dispatched` guard, turn two resends turn one.
+    expect(h.sent).toEqual(["a rainy drive", "lo-fi"]);
   });
 
-  it("records the persona's reply, because nothing else has a copy of it", async () => {
-    /*
-      THE INVERTED GUARD. This used to assert the opposite — persona rows were
-      dropped because they were an echo of what we had just told Anam to say,
-      and resending them was an infinite loop that billed every hop.
-
-      That loop cannot exist now: this class produces no replies, so a persona
-      row is Anam's model ANSWERING. Drop it and the reply exists nowhere —
-      not in the transcript Chat reads, and not as the `asked` that tells the
-      extractor which question the next answer belongs to.
-    */
+  it("does not send the persona's own reply back as a turn", async () => {
+    // THIS IS THE INFINITE LOOP. Persona rows are what WE just spoke, echoed
+    // back; sending them bills every hop and never terminates.
     const h = harness();
 
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
       personaMessage("p1", "What genre are we going for?"),
     ]);
-    vi.advanceTimersByTime(DEBOUNCE_MS);
+    vi.advanceTimersByTime(DEBOUNCE_MS * 4);
     await settle();
 
-    expect(h.lines()).toEqual(["assistant:What genre are we going for?"]);
-    expect(h.replies).toEqual(["What genre are we going for?"]);
-  });
-
-  it("keeps a reply below the question it answered", async () => {
-    // Order is the whole reason the buffer is a Map and not a pair of lists. A
-    // scrambled batch writes an answer above its own question, and the
-    // extractor reads a user turn as the answer to the line before it.
-    const h = harness();
-
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      userMessage("m1", "hip-hop"),
-      personaMessage("p1", "Hip-Hop it is. What mood?"),
-      userMessage("m2", "dark"),
-    ]);
-    vi.advanceTimersByTime(DEBOUNCE_MS);
-    await settle();
-
-    expect(h.lines()).toEqual([
-      "user:hip-hop",
-      "assistant:Hip-Hop it is. What mood?",
-      "user:dark",
-    ]);
+    expect(h.sent).toEqual([]);
   });
 
   it("treats a growing partial transcript as one turn, not two", async () => {
@@ -178,13 +133,12 @@ describe("hearing", () => {
     vi.advanceTimersByTime(DEBOUNCE_MS);
     await settle();
 
-    expect(h.lines()).toEqual(["user:a rainy drive at night"]);
+    expect(h.sent).toEqual(["a rainy drive at night"]);
   });
 
   it("coalesces two utterances inside the debounce into a single turn", async () => {
-    // Anam split one thought into two messages. The extractor should read them
-    // as the one thought they were — "lo-fi" and "and quite slow" separately
-    // would be two answers to the same question, one of them nonsense.
+    // Anam split one thought into two messages. The interviewer should read
+    // them as the one thought they were.
     const h = harness();
 
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "lo-fi")]);
@@ -196,31 +150,11 @@ describe("hearing", () => {
     vi.advanceTimersByTime(DEBOUNCE_MS);
     await settle();
 
-    expect(h.lines()).toEqual(["user:lo-fi and quite slow"]);
-  });
-
-  it("never merges across a change of speaker", async () => {
-    // The safety rail on the merge above: only ADJACENT same-role runs join,
-    // so a reply can never be absorbed into a question or vice versa.
-    const h = harness();
-
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      userMessage("m1", "lo-fi"),
-      personaMessage("p1", "Nice."),
-      userMessage("m2", "and quite slow"),
-    ]);
-    vi.advanceTimersByTime(DEBOUNCE_MS);
-    await settle();
-
-    expect(h.lines()).toEqual([
-      "user:lo-fi",
-      "assistant:Nice.",
-      "user:and quite slow",
-    ]);
+    expect(h.sent).toEqual(["lo-fi and quite slow"]);
   });
 
   it("ignores an empty transcript", async () => {
-    // STT emits these on a cough — and `RecordedTurn` has min_length=1 with
+    // STT emits these on a cough — and `ChatTurnRequest` has min_length=1 with
     // str_strip_whitespace=True, so an empty turn would be a 422.
     const h = harness();
 
@@ -233,11 +167,10 @@ describe("hearing", () => {
   });
 
   it("shows the user their own words immediately, before the reply exists", async () => {
-    // Layer 1 of the cover for the gap, and the one doing the real work: it
-    // answers the question the user actually has, "did it hear me right?"
+    // Layer 1 of the ~3s cover, and the one doing the real work: it answers
+    // the question the user actually has, which is "did it hear me right?"
     const h = harness({ hold: true });
 
-    h.client.emit(ANAM_EVENT.USER_SPEECH_ENDED);
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "a rainy drive")]);
     vi.advanceTimersByTime(DEBOUNCE_MS);
     await settle();
@@ -246,39 +179,25 @@ describe("hearing", () => {
     expect(h.replies).toEqual([]);
     expect(h.phases).toContain("thinking");
   });
-
-  it("clears the thinking phase once Anam has answered", async () => {
-    const h = harness();
-
-    h.client.emit(ANAM_EVENT.USER_SPEECH_ENDED);
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      userMessage("m1", "hip-hop"),
-      personaMessage("p1", "Good pick."),
-    ]);
-    vi.advanceTimersByTime(DEBOUNCE_MS);
-    await settle();
-
-    expect(h.phases[h.phases.length - 1]).toBe("speaking");
-  });
 });
 
 describe("serialising", () => {
-  it("never records two batches at once", async () => {
+  it("never runs two turns at once", async () => {
     /*
       Two concurrent POSTs would be actively harmful rather than wasteful: both
-      append rows, both save_draft last-writer-wins, and they complete in an
-      order that need not be send order — an out-of-order transcript the user
-      can then read in Chat.
+      append a user row, both run the Bedrock chain, both save_draft
+      last-writer-wins, and the cache folds them in COMPLETION order — which
+      need not be send order.
     */
     const h = harness({ hold: true });
 
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "first")]);
     vi.advanceTimersByTime(DEBOUNCE_MS);
     await settle();
-    expect(h.lines()).toEqual(["user:first"]);
+    expect(h.sent).toEqual(["first"]);
 
-    // A second utterance arrives mid-record — a correction, exactly when
-    // people speak again.
+    // A second utterance arrives mid-turn — a correction, exactly when people
+    // speak again.
     h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
       userMessage("m1", "first"),
       userMessage("m2", "second"),
@@ -287,41 +206,47 @@ describe("serialising", () => {
     await settle();
 
     // Buffered, not raced and not dropped.
-    expect(h.lines()).toEqual(["user:first"]);
+    expect(h.sent).toEqual(["first"]);
 
-    h.release();
+    h.release(reply("ok"));
     await settle();
     await settle();
 
-    expect(h.lines()).toEqual(["user:first", "user:second"]);
+    expect(h.sent).toEqual(["first", "second"]);
   });
 });
 
 describe("speaking", () => {
-  /*
-    `speak` is reached two ways now, and neither is a reply: the greeting, and
-    an error that has to be said out loud because there is nothing to read.
-    Anam speaks its own answers, so these drive `greet` — the one path that
-    still puts our words in the avatar's mouth.
-  */
+  it("pushes every chunk in one pass so the fifteen-second stream timeout cannot fire", async () => {
+    const h = harness({ hold: true });
 
-  it("pushes every chunk in one pass so the fifteen-second stream timeout cannot fire", () => {
-    const h = harness();
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
 
-    // If `speak` awaited even ONCE between chunks, the stream would not have
-    // ended synchronously — and that gap is exactly what starts the SDK's 15 s
-    // idle clock counting.
-    h.loop.greet("One. Two. Three.");
+    // The fake's "task" counter is bumped from a microtask queued immediately
+    // before the reply lands. If `speak` awaited even ONCE between chunks,
+    // this would run in the gap and the tick would no longer match — which is
+    // exactly the gap that starts the SDK's 15s idle clock counting.
+    queueMicrotask(() => h.client.advanceTask());
+    h.release(reply("One. Two. Three."));
+    await settle();
+    await settle();
 
     const stream = h.client.lastStream!;
     expect(stream.chunks).toHaveLength(3);
     expect(stream.endedSynchronously).toBe(true);
   });
 
-  it("marks the last chunk end-of-speech and ends the message exactly once", () => {
-    const h = harness();
+  it("marks the last chunk end-of-speech and ends the message exactly once", async () => {
+    const h = harness({ hold: true });
 
-    h.loop.greet("Nice one. What mood?");
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("Nice one. What mood?"));
+    await settle();
+    await settle();
 
     const stream = h.client.lastStream!;
     expect(stream.chunks.map((c) => c.text)).toEqual(["Nice one.", "What mood?"]);
@@ -329,18 +254,28 @@ describe("speaking", () => {
     expect(stream.endCount).toBe(1);
   });
 
-  it("sanitises a line before it is spoken", () => {
-    const h = harness();
+  it("sanitises the reply before it is spoken", async () => {
+    const h = harness({ hold: true });
 
-    h.loop.greet("**Nice** — [Verse 1] what genre? 🎵");
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("**Nice** — [Verse 1] what genre? 🎵"));
+    await settle();
+    await settle();
 
     expect(h.client.lastStream!.chunks[0]!.text).toBe("Nice — what genre?");
   });
 
-  it("opens no talk stream for a line that sanitises away to nothing", () => {
-    const h = harness();
+  it("opens no talk stream for a reply that sanitises away to nothing", async () => {
+    const h = harness({ hold: true });
 
-    h.loop.greet("🎵");
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("🎵"));
+    await settle();
+    await settle();
 
     expect(h.client.streams).toEqual([]);
     expect(h.phases[h.phases.length - 1]).toBe("listening");
@@ -348,41 +283,43 @@ describe("speaking", () => {
 });
 
 describe("barge-in", () => {
-  it("ends the talk stream and returns to listening on TALK_STREAM_INTERRUPTED", () => {
+  it("ends the talk stream and returns to listening on TALK_STREAM_INTERRUPTED", async () => {
     /*
       The microphone is NOT muted during a reply. Anam ships this event as a
       first-class path, and barge-in is what makes a wrong three-second answer
       survivable.
     */
     const h = harness();
-    h.loop.greet("A long greeting nobody let it finish.");
+
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
 
     const streamsBefore = h.client.streams.length;
     h.client.emit(ANAM_EVENT.TALK_STREAM_INTERRUPTED, "corr-1");
 
     expect(h.phases[h.phases.length - 1]).toBe("listening");
-    // NOT re-spoken: only the audio was cut, which is what interrupting asked
-    // for.
+    // NOT re-spoken: the transcript is already complete, and only the audio
+    // was cut — which is exactly what interrupting asked for.
     expect(h.client.streams.length).toBe(streamsBefore);
     expect(h.client.lastStream!.endCount).toBe(1);
     expect(h.client.muted).toBe(false);
   });
 
   it("keeps an interrupted reply in the transcript", async () => {
-    const h = harness();
+    const h = harness({ hold: true });
 
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      personaMessage("p1", "A long answer nobody let it finish."),
-    ]);
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
     vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("A long answer nobody let it finish."));
+    await settle();
     await settle();
 
     h.client.emit(ANAM_EVENT.TALK_STREAM_INTERRUPTED, "corr-1");
 
-    // Anam had already reported the line before the audio was cut, so it is
-    // recorded and readable even though it was never heard in full.
+    // The turn resolved into the caller's hands BEFORE speak was ever called.
     expect(h.replies).toEqual(["A long answer nobody let it finish."]);
-    expect(h.lines()).toEqual(["assistant:A long answer nobody let it finish."]);
   });
 });
 
@@ -419,9 +356,12 @@ describe("ending", () => {
     expect(h.ends).toEqual([]);
   });
 
-  it("disposes mid-speech without leaving a talk stream open", () => {
+  it("disposes mid-speech without leaving a talk stream open", async () => {
     const h = harness();
-    h.loop.greet("A greeting cut short by the door closing.");
+
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
 
     h.loop.dispose();
 
@@ -440,7 +380,7 @@ describe("ending", () => {
     expect(h.sent).toEqual([]);
   });
 
-  it("records nothing while muted, which is what ending and a hidden tab do", async () => {
+  it("posts nothing while muted, which is what ending and a hidden tab do", async () => {
     const h = harness();
     h.loop.setMuted(true);
 
@@ -453,21 +393,19 @@ describe("ending", () => {
   });
 
   it("reports a drop that cut a reply short, so the user can read the rest", async () => {
-    // Anam reports the line as it starts saying it, which puts the phase in
-    // "speaking" — so a close arriving here is a connection that died on an
-    // answer the user may only have half heard.
-    const h = harness();
+    const h = harness({ hold: true });
 
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      personaMessage("p1", "A long answer they only half heard."),
-    ]);
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
     vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("A long answer they only half heard."));
+    await settle();
     await settle();
 
     h.client.emit(ANAM_EVENT.CONNECTION_CLOSED, "CONNECTION_CLOSED_CODE_WEBRTC_FAILURE");
 
     expect(h.ends).toEqual(["dropped"]);
-    // It is already recorded, so the caller sends them to Chat to read it.
+    // They already paid a Bedrock turn for this. The caller sends them to Chat.
     expect(h.loop.hasUnspokenReply()).toBe(true);
   });
 
@@ -475,12 +413,13 @@ describe("ending", () => {
     // Interrupting is the user CHOOSING to stop listening. The transcript is
     // already complete, and shoving them into Chat for it would punish the
     // feature's best affordance.
-    const h = harness();
+    const h = harness({ hold: true });
 
-    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [
-      personaMessage("p1", "A long answer."),
-    ]);
+    h.client.emit(ANAM_EVENT.MESSAGE_HISTORY_UPDATED, [userMessage("m1", "hi")]);
     vi.advanceTimersByTime(DEBOUNCE_MS);
+    await settle();
+    h.release(reply("A long answer."));
+    await settle();
     await settle();
 
     h.client.emit(ANAM_EVENT.TALK_STREAM_INTERRUPTED, "corr-1");

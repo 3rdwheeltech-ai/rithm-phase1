@@ -330,30 +330,6 @@ class ConversationService:
 
     # ── Caps ───────────────────────────────────────────────────────────────
 
-    async def last_assistant_text(self, *, session_id: UUID) -> str:
-        """
-        The last thing the assistant said, or "" if it has not spoken yet.
-
-        ONE ROW, not a history walk. The voice record path needs exactly this
-        one string — it is the `asked` that disambiguates a one-word answer for
-        the extractor ("dark" is a mood only if that was the question) — and
-        reusing `history` to find it would pull a token budget's worth of rows
-        to read the last of them, while a small budget could truncate past the
-        very message being looked for.
-        """
-        async with get_session("conversation") as session:
-            result = await session.execute(
-                text(
-                    "SELECT content "  # noqa: S608 — constants
-                    f"FROM {MESSAGES_TABLE} "
-                    "WHERE session_id = CAST(:session_id AS uuid) AND role = :role "
-                    "ORDER BY created_at DESC, id DESC "
-                    "LIMIT 1"
-                ),
-                {"session_id": str(session_id), "role": MessageRole.ASSISTANT.value},
-            )
-        return str(result.scalar_one_or_none() or "")
-
     async def count(self, *, session_id: UUID) -> int:
         """Messages the USER has sent in this session — i.e. turns taken."""
         async with get_session("conversation") as session:

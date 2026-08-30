@@ -34,9 +34,6 @@ OTHER_USER_ID = UUID("00000000-0000-7000-8000-0000000000d2")
 TOKEN = "anam-session-token-that-must-never-be-logged"
 API_KEY = "anam-api-key-that-must-never-be-logged"
 VOICE_ID = "voice-tara-confident-ally"
-# Any non-sentinel value. The point is that it is NOT CUSTOMER_CLIENT_V1 —
-# that one means "no brain at all", which main.py now refuses to boot on.
-LLM_ID = "llm-anam-hosted-model"
 
 TOKEN_URL = "https://api.anam.ai/v1/auth/session-token"
 
@@ -85,7 +82,7 @@ def anam_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("ANAM_ENABLED", "true")
     monkeypatch.setenv("ANAM_API_KEY", API_KEY)
     monkeypatch.setenv("ANAM_VOICE_ID", VOICE_ID)
-    monkeypatch.setenv("ANAM_LLM_ID", LLM_ID)
+    monkeypatch.setenv("ANAM_LLM_ID", "CUSTOMER_CLIENT_V1")
     yield
     for name in ("ANAM_ENABLED", "ANAM_API_KEY", "ANAM_VOICE_ID", "ANAM_LLM_ID"):
         monkeypatch.delenv(name, raising=False)
@@ -217,25 +214,19 @@ async def test_sends_persona_config_and_never_a_persona_id(
 
 
 @pytest.mark.asyncio
-async def test_the_persona_config_carries_the_configured_brain(
+async def test_the_persona_config_disables_anams_own_llm(
     client: AsyncClient, anam_env: None, httpx_mock: HTTPXMock
 ) -> None:
     """
-    The brain is whatever config says, and it is SENT rather than left to the
-    saved persona.
+    THE SINGLE MOST IMPORTANT ASSERTION IN THIS FEATURE.
 
-    This assertion used to read `== "CUSTOMER_CLIENT_V1"` and was described as
-    the most important in the feature, back when the backend wrote every reply.
-    Anam's own model now conducts the conversation — so what matters here is no
-    longer WHICH brain, but that the brain is pinned in the mint body at all.
-    A persona referenced by id would take its llmId from whatever state someone
-    last left the Anam Lab UI in; sending it explicitly keeps that one value
-    under review in git.
+    It is what stands between the product and the avatar quietly growing its
+    own brain — a failure with no error, no 500 and no alarm, just a DraftCard
+    that never fills and a transcript with a hole in it.
 
-    What replaced the old assertion's protection is `main.py`'s inverted boot
-    guard (CUSTOMER_CLIENT_V1 with no backend replies is a mute avatar) and the
-    `voice_turn_recorded` log line, which is what proves the draft is still
-    being built while somebody else does the talking.
+    Anam's own model was tried here and reverted. It was not subtle about it —
+    a minute of scene-painting a turn — but the reason it can never sit in this
+    seat is quieter: it cannot see the draft, so it re-asks what it already has.
     """
     mint_ok(httpx_mock)
 
@@ -243,9 +234,7 @@ async def test_the_persona_config_carries_the_configured_brain(
 
     persona: object = sent_body(httpx_mock)["personaConfig"]
     assert isinstance(persona, dict)
-    assert persona["llmId"] == LLM_ID
-    # The old value would mean nothing answers at all.
-    assert persona["llmId"] != "CUSTOMER_CLIENT_V1"
+    assert persona["llmId"] == "CUSTOMER_CLIENT_V1"
 
 
 @pytest.mark.asyncio
@@ -643,25 +632,3 @@ async def test_the_token_is_never_logged(
     assert minted[0]["ok"] is True
     assert minted[0]["status"] == 200
 
-
-@pytest.mark.asyncio
-async def test_anam_is_told_not_to_greet(
-    client: AsyncClient, anam_env: None, httpx_mock: HTTPXMock
-) -> None:
-    """
-    The SPA owns the greeting, and since Anam's own model started answering
-    this is load-bearing rather than tidy.
-
-    `VoiceTurnLoop.greet()` speaks the last assistant line from the existing
-    transcript, which is what picks up a user arriving from Chat mid-thought.
-    Anam cannot see that transcript and would open with its own hello — so
-    without this the user hears two greetings, and the one carrying the
-    continuity arrives second.
-    """
-    mint_ok(httpx_mock)
-
-    await client.post("/api/v1/chat/voice/session")
-
-    persona: object = sent_body(httpx_mock)["personaConfig"]
-    assert isinstance(persona, dict)
-    assert persona["skipGreeting"] is True

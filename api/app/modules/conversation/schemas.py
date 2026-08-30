@@ -97,12 +97,6 @@ BPM_MAX = 300
 # unbounded column.
 CHAT_MESSAGE_MAX_LENGTH = 1000
 
-# A ceiling on one record POST, not on the conversation. The client debounces
-# and flushes what Anam's history event gave it; a handful of turns is the
-# realistic batch and anything near this bound means the client is replaying
-# history it should have de-duplicated.
-MAX_RECORDED_TURNS = 20
-
 
 # ── Sanitisers ─────────────────────────────────────────────────────────────
 
@@ -342,47 +336,6 @@ class ChatTurnResponse(BaseModel):
     # One-tap answers to whatever the assistant just asked. Chips, not a menu:
     # the panel is 245px wide and a full option list would not fit.
     suggestions: list[str] = Field(default_factory=list)
-
-
-class RecordedTurn(BaseModel):
-    """One line of a voice conversation Anam's own model conducted."""
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_LENGTH)
-
-
-class VoiceTurnRecordRequest(BaseModel):
-    """
-    POST /chat/turns/record — the transcript of a turn Anam already spoke.
-
-    THIS ROUTE GENERATES NOTHING. Since the avatar answers with Anam's own LLM
-    (see config.anam_llm_id), the reply exists before the server hears about
-    it. What the server still owns is the RECORD: the durable transcript Chat
-    reads, and the structured SongDraft that pre-fills the Create form. Without
-    this the conversation would be fast and completely unusable — nothing
-    captured, nothing validated, and no handoff to Create.
-
-    An ORDERED LIST rather than a user/assistant pair, because Anam's
-    MESSAGE_HISTORY_UPDATED carries a history array and the client can flush
-    two user utterances that both arrived before the persona answered. The
-    caller's order is the record's order.
-    """
-
-    turns: list[RecordedTurn] = Field(min_length=1, max_length=MAX_RECORDED_TURNS)
-
-
-class VoiceTurnRecordResponse(BaseModel):
-    """
-    The draft as it stands after extraction, and nothing else.
-
-    No `message` and no `suggestions`: there is no reply to hand back, and
-    chips would be one-tap answers to a question this server never asked.
-    """
-
-    draft: SongDraft
-    ready: bool
 
 
 class ChatSessionResponse(BaseModel):

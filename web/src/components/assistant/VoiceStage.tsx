@@ -66,12 +66,14 @@ const VoiceStage = forwardRef<
     captions: VoiceCaption[];
     /** The utterance STT just finalised, shown before the reply exists. */
     pendingTranscript: string | null;
+    suggestions: string[];
+    onSuggestion: (suggestion: string) => void;
     onEnd: () => void;
     onGesture: () => void;
     className?: string;
   }
 >(function VoiceStage(
-  { captions, pendingTranscript, onEnd, onGesture, className },
+  { captions, pendingTranscript, suggestions, onSuggestion, onEnd, onGesture, className },
   videoRef,
 ) {
   const reduceMotion = usePrefersReducedMotion();
@@ -198,18 +200,28 @@ const VoiceStage = forwardRef<
       </div>
 
       {/*
-        NO CHIPS HERE ANY MORE, and their absence is deliberate rather than
-        pending.
+        `suggestions` already ride on every turn response and are invisible in
+        voice. Rendering them as chips is free and rescues the mixed-mode user
+        who would otherwise have to guess the vocabulary.
 
-        They used to ride free on every turn response, generated server-side
-        against the assistant's OWN reply — it chose the question, so chips for
-        a different one would be worse than none. Anam's model writes the reply
-        now, so there is nothing to generate them from short of a second model
-        call, which would hand back exactly the latency that switch bought.
-
-        Chat still has them: `/chat/messages` still answers with `suggestions`,
-        and that path is untouched.
+        They are NOT appended to the spoken text. The reply is already a
+        question; reading a menu aloud after it is what makes phone systems
+        unbearable.
       */}
+      {suggestions.length > 0 && status === "live" && (
+        <div className="mt-2 flex shrink-0 flex-wrap gap-1.5">
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              onClick={() => onSuggestion(suggestion)}
+              className="lg-thin rounded-full px-3 py-1 text-2xs font-medium text-ink-muted transition-colors hover:text-ink"
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/*
         THE HANDOFF, on the Talk side at last.

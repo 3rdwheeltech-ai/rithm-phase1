@@ -1,92 +1,91 @@
 import { useCallback, useRef } from "react";
 import { ApiError } from "../lib/api";
-import { useRecordVoiceTurns } from "./useChat";
-import type { RecordedTurn, VoiceRecordOutcome } from "../lib/anam/VoiceTurnLoop";
-import { CHAT_SESSION_FULL_TYPE } from "../types/api";
+import { useSendChatMessage } from "./useChat";
+import type { VoiceTurnOutcome } from "../lib/anam/VoiceTurnLoop";
+import {
+  ASSISTANT_UNAVAILABLE_TYPE,
+  CHAT_SESSION_FULL_TYPE,
+} from "../types/api";
 
 /**
- * One batch of voice turns, recorded through the SAME cache entry the composer
- * writes.
+ * One voice turn, through the SAME mutation the composer uses.
  *
- * THE CENTRAL DESIGN DECISION OF THE FEATURE, AND IT SURVIVED THE BRAIN
- * SWITCH. Anam's own model now conducts the conversation — this hook no longer
- * fetches a reply — but the voice path still writes into `qk.chat`, so Talk
- * and Chat remain two doors on one conversation: the same session row, the
- * same transcript, the same draft, the same `ready`.
+ * THE CENTRAL DESIGN DECISION OF THE FEATURE, in one hook. The voice path
+ * writes into the SAME `qk.chat` cache entry the text path does, so Talk and
+ * Chat are two doors on one conversation: the same session row, the same
+ * transcript, the same draft, the same `ready`. That is what makes every
+ * fallback lossless — "the avatar broke" costs the user nothing but the
+ * avatar, because everything ever said is already on the server.
  *
- * That is what stopped the switch being a trade of the product for latency.
- * Without it the avatar would be fast and the interview would produce nothing:
- * no validated genre, no mood, no draft, and no Create button to press.
+ * THREE THINGS THIS HAS TO GET RIGHT, and all three are about the call site
+ * rather than about the request:
  *
- * THREE THINGS THIS HAS TO GET RIGHT, all about the call site:
- *
- * 1. `mutateAsync`, not `mutate`. The loop serialises batches and must know
- *    when one has landed; `send.data` reads stale inside a handler registered
- *    at session start.
+ * 1. `mutateAsync`, not `mutate`. The loop must AWAIT the reply before it can
+ *    speak it, and `send.data` / `send.isPending` read stale inside a handler
+ *    registered at session start.
  *
  * 2. The returned callback is STABLE. `VoiceTurnLoop` registers it once, and a
  *    callback whose identity changed per render would leave the loop holding a
- *    `mutateAsync` from three turns ago. The ref indirection buys that.
+ *    `mutateAsync` from three turns ago. The ref indirection below is what
+ *    buys that.
  *
- * 3. A FAILURE HERE IS QUIETER THAN IT USED TO BE, and that is the one thing
- *    genuinely worse about the new architecture. A refused turn used to cost
- *    the user their answer, which they noticed immediately. It now costs the
- *    RECORD: Anam keeps talking, the conversation sounds perfect, and nothing
- *    is being captured. So the errors that mean "stop" are still spoken aloud
- *    and still end the session, because silence would be indistinguishable
- *    from working.
+ * 3. Error handling DIFFERS from chat. In the panel a 503 is a muted row the
+ *    user can read; here there is nothing to read, so it must be SPOKEN — and
+ *    a 409 or a 429 must END the session rather than hold the product's one
+ *    global Anam slot open for a server that will refuse the next turn too.
  */
 
-/** The 429 for the daily cap. Shared with the ErrorToast's generic path. */
+/** The 429 for the daily chat cap. Shared with the ErrorToast's generic path. */
 const RATE_LIMITED_STATUS = 429;
 
-export function useVoiceTurn(): (turns: RecordedTurn[]) => Promise<VoiceRecordOutcome> {
-  const record = useRecordVoiceTurns();
+export function useVoiceTurn(): (text: string) => Promise<VoiceTurnOutcome> {
+  const send = useSendChatMessage();
 
   // `mutateAsync` is referentially stable in react-query v5, but relying on
   // that would make this hook's contract depend on someone else's changelog.
   // The ref costs three lines and makes "stable" a property of this file.
-  const recordRef = useRef(record.mutateAsync);
-  recordRef.current = record.mutateAsync;
+  const sendRef = useRef(send.mutateAsync);
+  sendRef.current = send.mutateAsync;
 
-  return useCallback(
-    async (turns: RecordedTurn[]): Promise<VoiceRecordOutcome> => {
-      try {
-        await recordRef.current(turns);
-        return { kind: "recorded" };
-      } catch (error) {
-        const type = error instanceof ApiError ? error.type : "";
-        const status = error instanceof ApiError ? error.status : 0;
+  return useCallback(async (text: string): Promise<VoiceTurnOutcome> => {
+    try {
+      const turn = await sendRef.current({ message: text, source: "voice" });
+      return { kind: "reply", text: turn.message.content, suggestions: turn.suggestions };
+    } catch (error) {
+      const type = error instanceof ApiError ? error.type : "";
+      const status = error instanceof ApiError ? error.status : 0;
 
-        if (type === CHAT_SESSION_FULL_TYPE) {
-          return {
-            kind: "spoken-error",
-            text:
-              "We've filled this conversation up. I'll take you to chat, " +
-              "where you can start a fresh one.",
-            end: "chat-full",
-          };
-        }
-
-        if (status === RATE_LIMITED_STATUS) {
-          return {
-            kind: "spoken-error",
-            text: "That's all I can do for today. Everything we talked about is saved.",
-            end: "chat-rate-limited",
-          };
-        }
-
-        // Anything else: the session STAYS OPEN and nothing is said.
-        //
-        // This is the deliberate half of the trade above. A one-off 5xx on the
-        // record path costs a turn out of the draft, and interrupting a working
-        // conversation to announce a problem the user cannot act on would cost
-        // more than it saves — the next batch may well land, and the draft is
-        // rebuilt from whatever did. `voice_turn_recorded` going quiet in
-        // CloudWatch is how the persistent version of this gets noticed.
-        return { kind: "recorded" };
+      if (type === ASSISTANT_UNAVAILABLE_TYPE) {
+        // The session STAYS OPEN. The user's message is already committed
+        // server-side, so saying it again genuinely works — and ending the call
+        // over one refused turn would cost them the slot as well as the turn.
+        return {
+          kind: "spoken-error",
+          text: "Sorry — I lost that one. Say it again?",
+          end: null,
+        };
       }
-    },
-    [],
-  );
+
+      if (type === CHAT_SESSION_FULL_TYPE) {
+        return {
+          kind: "spoken-error",
+          text:
+            "We've filled this conversation up. I'll take you to chat, " +
+            "where you can start a fresh one.",
+          end: "chat-full",
+        };
+      }
+
+      // The daily cap, and anything else. Both end the call, and both say the
+      // thing that actually matters: nothing was lost.
+      return {
+        kind: "spoken-error",
+        text:
+          status === RATE_LIMITED_STATUS
+            ? "That's all I can do for today. Everything we talked about is saved."
+            : "Something went wrong there. Everything we talked about is saved.",
+        end: "chat-rate-limited",
+      };
+    }
+  }, []);
 }

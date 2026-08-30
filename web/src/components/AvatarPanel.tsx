@@ -256,6 +256,8 @@ export default function AvatarPanel({
           ref={voice.videoRef}
           captions={voice.captions}
           pendingTranscript={voice.pendingTranscript}
+          suggestions={voice.suggestions}
+          onSuggestion={voice.answerSuggestion}
           onEnd={voice.end}
           onGesture={voice.retryGesture}
           className="w-full"

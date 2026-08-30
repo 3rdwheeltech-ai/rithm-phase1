@@ -237,18 +237,6 @@ export interface ChatTurnResponse {
   suggestions: string[];
 }
 
-/**
- * POST /chat/turns/record. The draft after extraction, and nothing else.
- *
- * No `message` and no `suggestions`, unlike `ChatTurnResponse`: since Anam's
- * own model conducts the conversation, the server has no reply to hand back
- * and no question of its own for chips to answer.
- */
-export interface VoiceTurnRecordResponse {
-  draft: SongDraft;
-  ready: boolean;
-}
-
 export interface ChatSessionResponse {
   /** Null when the user has never sent a message — a bare GET creates nothing. */
   session_id: string | null;

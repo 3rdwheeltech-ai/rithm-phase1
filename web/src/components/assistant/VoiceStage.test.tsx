@@ -61,6 +61,8 @@ function stage(over: { captions?: VoiceCaption[]; onEnd?: () => void } = {}) {
           <VoiceStage
             captions={over.captions ?? CAPTIONS}
             pendingTranscript={null}
+            suggestions={[]}
+            onSuggestion={() => undefined}
             onEnd={over.onEnd ?? (() => undefined)}
             onGesture={() => undefined}
           />

@@ -34,8 +34,6 @@ from app.modules.conversation.schemas import (
     ChatTurnResponse,
     SongDraft,
     VoiceSessionResponse,
-    VoiceTurnRecordRequest,
-    VoiceTurnRecordResponse,
 )
 from app.modules.conversation.service import conversation_service, count_tokens
 from app.shared.auth import require_user
@@ -223,113 +221,6 @@ async def post_chat_message(
         ready=result.ready,
         suggestions=result.suggestions,
     )
-
-
-@router.post("/chat/turns/record", response_model=VoiceTurnRecordResponse)
-async def post_voice_turns(
-    body: VoiceTurnRecordRequest,
-    user_id: UUID = Depends(require_user),
-) -> VoiceTurnRecordResponse:
-    """
-    Record a voice exchange Anam's own model already spoke, and move the draft.
-
-    THE COUNTERWEIGHT TO GIVING ANAM THE BRAIN. The avatar answers on its own
-    now, which is what made it fast; this is what stops that being a trade of
-    the whole product for latency. Everything downstream of the conversation —
-    the transcript Chat reads, the SongDraft, `ready`, the handoff to Create —
-    is built here, from turns this server did not generate.
-
-    It writes the SAME session row `/chat/messages` writes, so Talk and Chat
-    remain two doors on one conversation and every existing reader (the session
-    GET, `qk.chat`, DraftCard) keeps working untouched.
-
-    NOTHING IS GENERATED. No chain, no reply, no suggestions — so this route
-    cannot 503 the way `/chat/messages` can, and it is off the speech path
-    entirely. A user turn costs one nova-micro extraction, which is why giving
-    the draft back did not give the latency back.
-    """
-    settings = get_settings()
-
-    # The daily cap first, and for the same reason /chat/messages checks it
-    # first: a user over the cap must not get an empty session row created as a
-    # side effect of being refused.
-    today = await conversation_service.count_today(user_id=user_id)
-    if today >= settings.chat_max_messages_per_day:
-        raise RateLimitExceededException(
-            retry_after_seconds=_DAILY_RETRY_AFTER_SECONDS,
-            used=today,
-            limit=settings.chat_max_messages_per_day,
-        )
-
-    session = await conversation_service.start(user_id=user_id)
-
-    turns = await conversation_service.count(session_id=session.id)
-    if turns >= settings.chat_max_messages_per_session:
-        raise ChatSessionFullException(settings.chat_max_messages_per_session)
-
-    draft = SongDraft.model_validate(session.draft)
-
-    # `asked` is what the assistant said BEFORE this batch — it disambiguates a
-    # one-word answer for the extractor ("dark" is a mood only if that was the
-    # question). Anam owns the conversation now, so the question comes out of
-    # the transcript rather than out of anything this module chose.
-    asked = await conversation_service.last_assistant_text(session_id=session.id)
-
-    recorded = 0
-    # Seeded from the COLUMN, the same reader the session GET uses, so a batch
-    # of assistant-only turns leaves `ready` exactly as it was rather than
-    # silently clearing a draft that was already complete.
-    result = agent.RecordResult(
-        delta=SongDraft(),
-        draft=draft,
-        ready=session.current_state == SessionState.READY_TO_EXPORT.value,
-    )
-
-    for turn in body.turns:
-        role = MessageRole.USER if turn.role == "user" else MessageRole.ASSISTANT
-        delta_json: dict[str, object] | None = None
-
-        if role is MessageRole.USER:
-            # Extraction happens BEFORE the append, so `asked` is still the
-            # question this answer was given to rather than something later in
-            # the same batch.
-            result = await agent.record_turn(
-                draft=result.draft, user_text=turn.content, asked=asked
-            )
-            delta_json = {"draft_delta": result.delta.model_dump(mode="json")}
-        else:
-            # The persona's line becomes the next turn's `asked`.
-            asked = turn.content
-
-        await conversation_service.append(
-            session_id=session.id,
-            role=role,
-            content=turn.content,
-            tool_calls=delta_json,
-            token_count=count_tokens(turn.content),
-        )
-        recorded += 1
-
-    await conversation_service.save_draft(
-        session_id=session.id,
-        draft=result.draft.model_dump(mode="json"),
-        ready=result.ready,
-        voice=True,
-    )
-
-    # THE LINE TO ALARM ON. Sessions minted with no `voice_turn_recorded`
-    # following them is the new silent failure — Anam talking while nothing is
-    # captured — and it is invisible from any other signal, because the
-    # conversation looks and sounds completely normal to the user.
-    #
-    # Lengths, counts and flags only, never the words (agent.py rule 3).
-    logger.info(
-        "voice_turn_recorded",
-        turns=recorded,
-        session_turns=turns + recorded,
-        ready=result.ready,
-    )
-    return VoiceTurnRecordResponse(draft=result.draft, ready=result.ready)
 
 
 @router.delete("/chat/session", status_code=status.HTTP_204_NO_CONTENT)
