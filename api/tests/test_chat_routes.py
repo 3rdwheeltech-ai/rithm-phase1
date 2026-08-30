@@ -628,11 +628,17 @@ async def test_voice_available_tracks_the_setting_in_both_directions(
     """
     from app.config import get_settings
 
-    assert (await client.get("/api/v1/chat/session")).json()["voice_available"] is False
-
-    monkeypatch.setenv("ANAM_ENABLED", "true")
+    # BOTH directions pinned explicitly. `Settings` reads `env_file=".env"`, so
+    # relying on the ambient default for the `false` half makes this test pass
+    # or fail depending on whether the developer has switched voice on locally.
+    monkeypatch.setenv("ANAM_ENABLED", "false")
     get_settings.cache_clear()
     try:
+        body = (await client.get("/api/v1/chat/session")).json()
+        assert body["voice_available"] is False
+
+        monkeypatch.setenv("ANAM_ENABLED", "true")
+        get_settings.cache_clear()
         body = (await client.get("/api/v1/chat/session")).json()
         assert body["voice_available"] is True
     finally:

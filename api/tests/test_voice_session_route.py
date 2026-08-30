@@ -161,18 +161,32 @@ async def test_requires_authentication(
 
 @pytest.mark.asyncio
 async def test_disabled_by_default_makes_no_outbound_request(
-    client: AsyncClient, httpx_mock: HTTPXMock
+    client: AsyncClient, httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     501, not 404 and not 403 — the route exists and the caller did nothing
     wrong. The check comes FIRST, so a deployment with no key costs zero
     outbound requests.
-    """
-    response = await client.post("/api/v1/chat/voice/session")
 
-    assert response.status_code == 501
-    assert response.json()["type"] == "https://rithm.dev/errors/voice-not-configured"
-    assert httpx_mock.get_requests() == []
+    ANAM_ENABLED IS PINNED OFF rather than assumed off. `Settings` reads
+    `env_file=".env"`, so a developer who has switched voice on locally would
+    otherwise watch this test try a real mint against a real key and fail on
+    their machine while passing in CI.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("ANAM_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        response = await client.post("/api/v1/chat/voice/session")
+        assert response.status_code == 501
+        assert (
+            response.json()["type"] == "https://rithm.dev/errors/voice-not-configured"
+        )
+        assert httpx_mock.get_requests() == []
+    finally:
+        monkeypatch.delenv("ANAM_ENABLED", raising=False)
+        get_settings.cache_clear()
 
 
 # ── The persona config ─────────────────────────────────────────────────────
@@ -209,6 +223,10 @@ async def test_the_persona_config_disables_anams_own_llm(
     It is what stands between the product and the avatar quietly growing its
     own brain — a failure with no error, no 500 and no alarm, just a DraftCard
     that never fills and a transcript with a hole in it.
+
+    Anam's own model was tried here and reverted. It was not subtle about it —
+    a minute of scene-painting a turn — but the reason it can never sit in this
+    seat is quieter: it cannot see the draft, so it re-asks what it already has.
     """
     mint_ok(httpx_mock)
 

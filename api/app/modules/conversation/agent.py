@@ -28,6 +28,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from time import perf_counter
 
 import structlog
 from pydantic import ValidationError
@@ -108,7 +109,15 @@ async def _run_chain(
             model_id=model_id,
             system=system,
             messages=history,
-            max_tokens=400,
+            # A CEILING, NOT A TARGET — and worth being clear about, because
+            # it is easy to read as a latency fix and it is not. A reply that
+            # was already going to be 60 tokens takes exactly as long under
+            # either cap; this only bites the pathological turn. That turn is
+            # real though: the persona is specified as "two or three sentences,
+            # then a question", and 400 tokens is roughly 300 words — licence
+            # to monologue that nothing else takes away. Anam's own model ran
+            # at 4096 and did exactly that for a minute at a time.
+            max_tokens=160,
             temperature=0.7,
             read_timeout=settings.bedrock_chat_read_timeout_seconds,
         )
@@ -791,9 +800,18 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
     # A no-op when Bedrock is off — `_extract` reads DISABLED off the transport
     # the same way `_run_chain` does, and returns an empty draft. The offline
     # interviewer below parses the message itself.
+    # TIMED, because until now nothing was. `chat_turn` carries a comment
+    # claiming CloudWatch can answer "how much of our traffic is voice, and is
+    # it slower?" and it could not: there was no duration on any line in this
+    # module. A voice turn is two SEQUENTIAL model calls and the user waits for
+    # both before hearing a word, so which of the two dominates is the whole
+    # question — and it was being guessed at rather than read.
+    extract_started = perf_counter()
     delta = await _extract(draft=draft, user_text=user_text, asked=asked)
+    extract_ms = round((perf_counter() - extract_started) * 1000)
     merged = draft.merged_with(delta)
 
+    chain_started = perf_counter()
     try:
         outcome, model_id, reply = await asyncio.wait_for(
             _run_chain(history=history, system=_chat_system(merged)),
@@ -830,11 +848,19 @@ async def run_turn(*, history: list[ConverseMessage], draft: SongDraft) -> TurnR
         logger.warning("chat_chain_exhausted", models=len(settings.chat_model_ids))
         raise AssistantUnavailableException()
 
+    chain_ms = round((perf_counter() - chain_started) * 1000)
     logger.info(
         "chat_turn_complete",
         model_id=model_id,
         reply_chars=len(reply),
         ready=draft_is_ready(merged),
+        # The two halves separately, because the fix differs. Time in the chain
+        # is answered by streaming the reply — the avatar could start on
+        # sentence one instead of waiting for the last. Time in extraction is
+        # answered by a smaller model or by not blocking the reply on it.
+        extract_ms=extract_ms,
+        chain_ms=chain_ms,
+        total_ms=extract_ms + chain_ms,
     )
     return TurnResult(
         reply=reply.strip(),

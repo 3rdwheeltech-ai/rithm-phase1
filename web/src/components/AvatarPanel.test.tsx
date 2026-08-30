@@ -193,6 +193,53 @@ describe("AvatarPanel", () => {
     await screen.findByRole("button", { name: "Talk" });
     expect(useAssistant.getState().mode).toBe("talk");
   });
+
+  it("stays on Talk when the first turn of THIS session lands", async () => {
+    /*
+      THE REGRESSION. Reported from a live call: the user pressed Talk, said
+      "hip-hop", and was thrown into Chat one sentence in.
+
+      The resume effect used to read `hasTranscript` as live state and bail
+      with `if (!hasTranscript || resumed) return`. Starting from an empty
+      transcript, that bail left `resumed` FALSE — the effect stayed armed for
+      the whole session — and the first turn the user spoke flipped
+      `hasTranscript` true and fired the restore mid-call.
+
+      Writing into `qk.chat` is exactly what `useSendChatMessage` does on every
+      voice turn, so this is the real sequence and not an approximation of it.
+    */
+    serve(session());
+    const { queryClient } = renderWithProviders(<AvatarPanel />);
+
+    // The EMPTY transcript has to land first — that is the state the bug
+    // needed. Waiting on the Talk button is not enough: it renders while the
+    // query is still pending, so the effect would not have run yet.
+    await waitFor(() =>
+      expect(queryClient.getQueryData<ChatSessionResponse>(["chat"])).toBeDefined(),
+    );
+    expect(useAssistant.getState().mode).toBe("talk");
+
+    queryClient.setQueryData<ChatSessionResponse>(
+      ["chat"],
+      session({
+        session_id: "s1",
+        messages: [
+          {
+            id: "m0",
+            role: "user",
+            content: "hip-hop",
+            created_at: "2026-08-30T12:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    // Never — the transcript growing is this page load's own doing.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Talk" })).toBeInTheDocument(),
+    );
+    expect(useAssistant.getState().mode).toBe("talk");
+  });
 });
 
 describe("AvatarPanel · voice", () => {

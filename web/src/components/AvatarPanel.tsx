@@ -163,14 +163,26 @@ export default function AvatarPanel({
    * still sitting in the query cache, so an ungated restore would bounce the
    * user back into the conversation they had just closed, and both ways out
    * (the toggle and ChatPanel's X) would be dead controls.
+   *
+   * IT ARMS ON THE QUERY RESOLVING, NOT ON THE TRANSCRIPT BEING NON-EMPTY, and
+   * that distinction is a bug fix rather than a style choice. The old condition
+   * (`if (!hasTranscript || resumed) return`) left the effect ARMED through a
+   * whole voice session whenever the transcript started empty: nothing had
+   * resolved it, so `resumed` stayed false, and the first turn the user spoke
+   * flipped `hasTranscript` true and fired the restore MID-CALL. Talk would
+   * throw the user into Chat one sentence into their own conversation.
+   *
+   * Keying on `session` instead means the decision is made once, at the moment
+   * the transcript first arrives, on the transcript AS IT WAS THEN — which is
+   * the question this effect was always trying to ask. A transcript that grows
+   * later is this page load's own doing and must never re-trigger it.
    */
   const { data: session } = useChatSession();
-  const hasTranscript = (session?.messages.length ?? 0) > 0;
   useEffect(() => {
-    if (!hasTranscript || resumed) return;
+    if (session === undefined || resumed) return;
     markResumed();
-    setMode("chat");
-  }, [hasTranscript, resumed, markResumed, setMode]);
+    if (session.messages.length > 0) setMode("chat");
+  }, [session, resumed, markResumed, setMode]);
 
   // Matches the Player it stacks above, so the two read as one column of glass
   // rather than two different materials.

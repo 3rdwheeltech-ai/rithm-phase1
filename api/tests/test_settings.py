@@ -105,6 +105,22 @@ def _boot(app: FastAPI) -> None:
         pass
 
 
+# Every ANAM_* variable the guards read. Set explicitly in each test rather
+# than inherited, because `Settings` has `env_file=".env"` and a developer who
+# has switched voice on locally would otherwise see these tests fail on their
+# machine and pass in CI — which is the worst way to learn about coupling.
+_ANAM_VARS = ("ANAM_ENABLED", "ANAM_VOICE_ID", "ANAM_LLM_ID")
+
+
+def _anam_env(monkeypatch: pytest.MonkeyPatch, **values: str) -> None:
+    """Pin every ANAM_* variable, so `.env` cannot reach into a guard test."""
+    for name in _ANAM_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+
+
 def test_prod_refuses_to_start_when_the_anam_llm_id_is_not_the_client_sentinel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,21 +130,21 @@ def test_prod_refuses_to_start_when_the_anam_llm_id_is_not_the_client_sentinel(
     never reaches /chat/messages, the draft never moves, and the only symptom
     is a DraftCard that stays empty six turns in.
 
-    This converts that into a deployment that never stabilises — the same trade
-    the SSE-secret check makes, and necessary for the same reason:
-    `extra="ignore"` means a misspelled variable silently takes a default.
+    Anam's own model was tried in that seat and reverted — it ran to a minute a
+    turn, and it cannot see the draft — so this guard is load-bearing again
+    rather than historical.
     """
-    monkeypatch.setenv("ANAM_ENABLED", "true")
-    monkeypatch.setenv("ANAM_VOICE_ID", "voice-id")
-    monkeypatch.setenv("ANAM_LLM_ID", "gemini-2.5-flash")
-    get_settings.cache_clear()
+    _anam_env(
+        monkeypatch,
+        ANAM_ENABLED="true",
+        ANAM_VOICE_ID="voice-id",
+        ANAM_LLM_ID="gemini-2.5-flash",
+    )
     try:
         with pytest.raises(RuntimeError, match="CUSTOMER_CLIENT_V1"):
             _boot(_build_app())
     finally:
-        for name in ("ANAM_ENABLED", "ANAM_VOICE_ID", "ANAM_LLM_ID"):
-            monkeypatch.delenv(name, raising=False)
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
 
 
 def test_it_refuses_to_start_with_voice_enabled_and_no_voice_id(
@@ -136,28 +152,32 @@ def test_it_refuses_to_start_with_voice_enabled_and_no_voice_id(
 ) -> None:
     """An avatar with the wrong voice is worse than no avatar, and there is no
     sensible default to fall back to."""
-    monkeypatch.setenv("ANAM_ENABLED", "true")
-    monkeypatch.setenv("ANAM_VOICE_ID", "")
-    get_settings.cache_clear()
+    # The sentinel, so the guard under test is the one that fires.
+    _anam_env(
+        monkeypatch,
+        ANAM_ENABLED="true",
+        ANAM_VOICE_ID="",
+        ANAM_LLM_ID="CUSTOMER_CLIENT_V1",
+    )
     try:
         with pytest.raises(RuntimeError, match="ANAM_VOICE_ID"):
             _boot(_build_app())
     finally:
-        for name in ("ANAM_ENABLED", "ANAM_VOICE_ID"):
-            monkeypatch.delenv(name, raising=False)
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
 
 
-def test_neither_guard_fires_when_voice_is_not_configured() -> None:
+def test_neither_guard_fires_when_voice_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     The default everywhere. Local, CI and any environment without a key must
     boot exactly as they do today.
     """
-    get_settings.cache_clear()
+    _anam_env(monkeypatch, ANAM_ENABLED="false")
     try:
         _boot(_build_app())
     finally:
-        get_settings.cache_clear()
+        _anam_env(monkeypatch)
 
 
 def test_the_anam_defaults_are_the_documented_ones() -> None:

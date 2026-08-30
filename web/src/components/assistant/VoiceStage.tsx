@@ -1,9 +1,12 @@
 import { forwardRef } from "react";
+import { ArrowRight, RotateCcw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/cn";
 import { ANAM_VIDEO_ELEMENT_ID } from "../../lib/anam/types";
 import { usePrefersReducedMotion } from "../../lib/useReducedMotion";
 import { mergeRefs } from "../../lib/useSpecular";
 import { useAssistant, type VoicePhase, type VoiceStatus } from "../../store/assistant";
+import { EMPTY_DRAFT, useChatSession, useResetChat } from "../../hooks/useChat";
 
 /**
  * The avatar, the captions and the clock — inside `AvatarPanel`'s EXISTING lens.
@@ -74,6 +77,13 @@ const VoiceStage = forwardRef<
   videoRef,
 ) {
   const reduceMotion = usePrefersReducedMotion();
+  const nav = useNavigate();
+  const reset = useResetChat();
+  // The same cache entry ChatPanel reads, so neither door derives `ready` for
+  // itself and the two can never disagree about when Create opens.
+  const { data: session } = useChatSession();
+  const draft = session?.draft ?? EMPTY_DRAFT;
+  const ready = session?.ready ?? false;
   const status = useAssistant((s) => s.voiceStatus);
   const phase = useAssistant((s) => s.voicePhase);
   const remainingMs = useAssistant((s) => s.voiceRemainingMs);
@@ -214,20 +224,71 @@ const VoiceStage = forwardRef<
       )}
 
       {/*
+        THE HANDOFF, on the Talk side at last.
+
+        It only ever existed in Chat, so a user who described a song entirely by
+        voice had no way out except switching doors to find the button. A pill
+        rather than Chat's full `DraftCard`: that card is a tall block of text
+        and this panel is already carrying a square video, a transcript and two
+        controls. The card's job is to SUMMARISE what was captured, which the
+        conversation just said out loud — so here the only part worth keeping is
+        the door.
+
+        `ready` is the same server-derived flag the DraftCard gates on, and it
+        arrives through the same `qk.chat` entry, so the two doors agree about
+        when the song is describable without either deriving it locally.
+
+        AMBER, matching DraftCard's button, because it is the same action.
+      */}
+      {ready && (
+        <button
+          type="button"
+          onClick={() => nav("/create", { state: { draft } })}
+          className="glass-btn glass-btn-amber mt-3 min-h-[36px] w-full rounded-el px-3 text-2xs font-semibold"
+        >
+          Open in Create
+          <ArrowRight className="ml-1.5 h-3.5 w-3.5" strokeWidth={2.5} />
+        </button>
+      )}
+
+      {/*
+        End, and Start over, as one row.
+
         A real <button> with a real label, replacing the Talk SpecularButton
         while live. Not only an a11y point: `Composer.tsx` records that each
         SpecularButton is a live WebGL context, and during a call StudioField's
         WebGL, the specular context, a `.lg-lens` filter pass and a 30 fps video
         decode are all compositing at once. One fewer context, and it is the
         correct control anyway.
+
+        Start over ENDS THE SESSION FIRST. Clearing the transcript under a live
+        avatar would leave Ria mid-sentence about a conversation that no longer
+        exists — and it releases the product's one global Anam slot rather than
+        holding it for a call whose whole subject was just deleted. Sized and
+        styled off `ChatPanel`'s header pair so the two doors read the same.
       */}
-      <button
-        type="button"
-        onClick={onEnd}
-        className="mt-3 w-full rounded-control border border-white/10 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-white/[0.06]"
-      >
-        End
-      </button>
+      <div className="mt-3 flex w-full items-center gap-2">
+        <button
+          type="button"
+          onClick={onEnd}
+          className="flex-1 rounded-control border border-white/10 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-white/[0.06]"
+        >
+          End
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onEnd();
+            reset.mutate();
+          }}
+          disabled={reset.isPending || captions.length === 0}
+          title="Start over"
+          aria-label="Start over"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-white/10 text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-30"
+        >
+          <RotateCcw className="h-4 w-4" strokeWidth={2} />
+        </button>
+      </div>
     </div>
   );
 });
