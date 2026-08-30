@@ -725,4 +725,3 @@ async def test_a_voice_turn_runs_the_same_agent_and_fills_the_same_draft(
     # And it is in the SAME transcript the Chat door reads.
     resumed = (await client.get("/api/v1/chat/session")).json()
     assert [m["role"] for m in resumed["messages"]] == ["user", "assistant"]
-

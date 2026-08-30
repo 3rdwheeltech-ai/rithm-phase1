@@ -631,4 +631,3 @@ async def test_the_token_is_never_logged(
     assert len(minted) == 1
     assert minted[0]["ok"] is True
     assert minted[0]["status"] == 200
-
