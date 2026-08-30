@@ -194,6 +194,122 @@ describe("AvatarPanel", () => {
     expect(useAssistant.getState().mode).toBe("talk");
   });
 
+  it("offers Start over from the first second of a call, not the first caption", async () => {
+    /*
+      THE REPORTED BUG, and it was the disabled attribute rather than the
+      handler. The gate used to be `captions.length === 0`, and captions only
+      fill once the loop has reported a turn — so in the opening seconds of a
+      call, before anyone has said anything, the button was greyed out and
+      pressing it did nothing at all.
+
+      A call that has just started is exactly when someone wants to start over.
+    */
+    const user = userEvent.setup();
+    withWebRTC();
+    const deletes: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        const target = String(url);
+        if (target.includes("/chat/voice/session") && init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(201, {
+              session_token: "tok",
+              lease_id: "lease",
+              expires_in_seconds: 180,
+            }),
+          );
+        }
+        if (target.includes("/chat/session") && init?.method === "DELETE") {
+          deletes.push(target);
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        return Promise.resolve(jsonResponse(200, VOICE_ON));
+      }),
+    );
+    useAssistant.setState({ resumed: true });
+
+    renderWithProviders(<AvatarPanel />);
+    await user.click(await screen.findByRole("button", { name: "Talk" }));
+
+    // No captions yet: nothing has been said.
+    const startOver = await screen.findByRole("button", { name: "Start over" });
+    expect(startOver).toBeEnabled();
+
+    await user.click(startOver);
+    await waitFor(() => expect(deletes).toHaveLength(1));
+    // And it did NOT hang up — that is what End is for.
+    expect(screen.queryByRole("button", { name: "End" })).toBeInTheDocument();
+  });
+
+  it("clears the transcript when Start over is pressed mid-call", async () => {
+    /*
+      THE BUG THIS TEST EXISTS FOR, and the reason it lives here rather than in
+      VoiceStage.test.tsx.
+
+      Start over used to own its `useResetChat` inside `VoiceStage`. Pressing
+      it ended the session, which flips `onStage` and unmounts the stage in the
+      same commit — so the DELETE went out and the server did soft-delete the
+      conversation, but the `onSuccess` that clears `qk.chat` went with the
+      unmounting observer. Server forgot; screen did not. The button read as
+      dead.
+
+      A standalone `VoiceStage` never unmounts, so the old test passed happily
+      while the real thing was broken. This one goes through the panel, where
+      the unmount actually happens.
+    */
+    const user = userEvent.setup();
+    withWebRTC();
+    const withTranscript = session({
+      voice_available: true,
+      session_id: "s1",
+      messages: [
+        { id: "m0", role: "user", content: "hip-hop", created_at: "2026-08-30T12:00:00Z" },
+      ],
+    });
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const target = String(url);
+      if (target.includes("/chat/voice/session") && init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse(201, {
+            session_token: "tok",
+            lease_id: "lease",
+            expires_in_seconds: 180,
+          }),
+        );
+      }
+      if (target.includes("/chat/session") && init?.method === "DELETE") {
+        // `null`, not `jsonResponse(204, {})`: constructing a Response with a
+        // 204 and a body throws, which would fail the mutation and make this
+        // test pass for the wrong reason.
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(jsonResponse(200, withTranscript));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    useAssistant.setState({ resumed: true });
+
+    const { queryClient } = renderWithProviders(<AvatarPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Talk" }));
+    const startOver = await screen.findByRole("button", { name: "Start over" });
+    await user.click(startOver);
+
+    // The DELETE went out AND the cache emptied. The second half is what was
+    // broken; asserting only the first is what let the bug ship.
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<ChatSessionResponse>(["chat"]);
+      expect(cached?.messages).toEqual([]);
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).includes("/chat/session") &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toBe(true);
+  });
+
   it("stays on Talk when the first turn of THIS session lands", async () => {
     /*
       THE REGRESSION. Reported from a live call: the user pressed Talk, said

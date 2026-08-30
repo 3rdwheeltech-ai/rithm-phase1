@@ -10,6 +10,8 @@ import { cn } from "../../lib/cn";
 import { draftToCreateState } from "../../lib/chat";
 import { INSTRUMENT_SUGGESTIONS } from "../../lib/suggestions";
 import { useShuffledPicks } from "../../lib/useShuffledPicks";
+import { usePrefersReducedMotion } from "../../lib/useReducedMotion";
+import { useTypewriter } from "../../lib/useTypewriter";
 import ErrorToast from "../ErrorToast";
 import SpecularButton, { SPECULAR_BASE, SPECULAR_LINE } from "../SpecularButton";
 import Segmented from "./Segmented";
@@ -65,7 +67,29 @@ Neon on the wet street, engine running low
 [chorus]
 …`;
 
-const LYRIC_BRIEF_PLACEHOLDER = "e.g. a late drive home after a fight nobody won";
+/**
+ * The lyric brief's placeholder, typed out and cycled.
+ *
+ * A LIST RATHER THAN ONE LINE, because a single frozen example reads as the
+ * format required rather than as an invitation. Watching it type — and reach
+ * for four quite different songs — says the box takes a sentence in your own
+ * words, which is the one thing people get wrong here: they paste lyrics into
+ * it instead of describing them.
+ *
+ * All four are scenes, none is a lyric, and none of them rhymes. That is the
+ * distinction the field is trying to teach.
+ */
+const LYRIC_BRIEF_PROMPTS = [
+  "e.g. a late drive home after a fight nobody won",
+  "e.g. the summer everything changed and nobody said so",
+  "e.g. a letter to someone who moved away years ago",
+  "e.g. the last night in a city you were done with",
+];
+
+/** Slower than the assistant panel's 45ms. A form is read, not watched. */
+const BRIEF_TYPE_MS = 55;
+const BRIEF_HOLD_MS = 3600;
+const BRIEF_ERASE_MS = 18;
 
 const SECTION_LABEL = "eyebrow";
 const FIELD_LABEL = "text-xs font-medium text-ink-muted";
@@ -102,6 +126,22 @@ export default function CreateForm() {
   // not lose it either.
   const [lyrics, setLyrics] = useState(seed.lyrics);
   const [lyricPrompt, setLyricPrompt] = useState(seed.lyricPrompt);
+
+  /*
+    The brief's placeholder types itself, cycling four examples.
+
+    STOPPED THE MOMENT THERE IS A VALUE. A placeholder is invisible behind
+    text, so animating one under a filled box is a timer nobody can see — and
+    it would keep re-rendering this form on every keystroke of its own. Reduced
+    motion holds the first example, which is exactly what shipped before.
+  */
+  const reduceMotion = usePrefersReducedMotion();
+  const lyricBriefPlaceholder = useTypewriter(LYRIC_BRIEF_PROMPTS, {
+    enabled: !reduceMotion && lyricPrompt === "",
+    typeMs: BRIEF_TYPE_MS,
+    slotMs: BRIEF_HOLD_MS,
+    eraseMs: BRIEF_ERASE_MS,
+  });
   const [genre, setGenre] = useState<Genre | "">(seed.genre);
   const [mood, setMood] = useState<Mood | "">(seed.mood);
   const [instruments, setInstruments] = useState<string[]>(seed.instruments);
@@ -302,7 +342,7 @@ export default function CreateForm() {
             maxLength={LYRICS_PROMPT_MAX_LENGTH}
             onChange={(e) => setLyricPrompt(e.target.value)}
             aria-label="What the song is about"
-            placeholder={LYRIC_BRIEF_PLACEHOLDER}
+            placeholder={lyricBriefPlaceholder}
             className="glass-input min-h-[72px] resize-none leading-relaxed"
           />
           <div className="mt-1 flex items-start justify-between gap-3">

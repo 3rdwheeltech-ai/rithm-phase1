@@ -13,6 +13,7 @@ lives in `INSERT … ON CONFLICT DO NOTHING` against the unique partial index.
 A script cannot be wrong about that; a store that enforces the index can.
 """
 
+import json
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -567,9 +568,9 @@ async def test_the_history_sent_to_the_model_is_oldest_first(
     captured: list[list[Any]] = []
     real_run_turn = agent.run_turn
 
-    async def _spy(*, history: list[Any], draft: Any) -> Any:
+    async def _spy(*, history: list[Any], draft: Any, voice: bool = False) -> Any:
         captured.append(history)
-        return await real_run_turn(history=history, draft=draft)
+        return await real_run_turn(history=history, draft=draft, voice=voice)
 
     monkeypatch.setattr(agent, "run_turn", _spy)
 
@@ -725,3 +726,156 @@ async def test_a_voice_turn_runs_the_same_agent_and_fills_the_same_draft(
     # And it is in the SAME transcript the Chat door reads.
     resumed = (await client.get("/api/v1/chat/session")).json()
     assert [m["role"] for m in resumed["messages"]] == ["user", "assistant"]
+
+
+# ── Idle sessions, and the two doors' registers ────────────────────────────
+
+
+def _age_session(db: FakeConversationDb, *, seconds: int) -> None:
+    """Push the live session's updated_at into the past."""
+    db.sessions[0]["updated_at"] = datetime.now(UTC) - timedelta(seconds=seconds)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_conversation_starts_over_on_the_next_message(
+    client: AsyncClient, db: FakeConversationDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The write path retires it. Coming back tomorrow to a half-finished
+    interview and having it silently continue is worse than a clean start.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("CHAT_SESSION_IDLE_SECONDS", "300")
+    get_settings.cache_clear()
+    try:
+        await client.post("/api/v1/chat/messages", json={"message": "hip-hop"})
+        first = db.sessions[0]["id"]
+
+        _age_session(db, seconds=600)
+        await client.post("/api/v1/chat/messages", json={"message": "dark"})
+
+        assert db.sessions[0]["deleted_at"] is not None
+        assert len(db.sessions) == 2
+        assert db.sessions[1]["id"] != first
+        # The new conversation starts empty, not carrying the old draft.
+        assert json.loads(db.sessions[1]["draft"] or "{}").get("genre") != "Hip-Hop"
+    finally:
+        monkeypatch.delenv("CHAT_SESSION_IDLE_SECONDS", raising=False)
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_the_session_get_agrees_that_a_stale_conversation_is_gone(
+    client: AsyncClient, db: FakeConversationDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    THE OTHER HALF, and it is not optional.
+
+    If only the write path expired sessions, the user would sit reading a
+    transcript that vanished the instant they replied to it. The GET must agree
+    BEFORE they type — and still write nothing, because "a bare GET creates
+    nothing" is this route's invariant in both directions.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("CHAT_SESSION_IDLE_SECONDS", "300")
+    get_settings.cache_clear()
+    try:
+        await client.post("/api/v1/chat/messages", json={"message": "hip-hop"})
+        assert (await client.get("/api/v1/chat/session")).json()[
+            "session_id"
+        ] is not None
+
+        _age_session(db, seconds=600)
+
+        body = (await client.get("/api/v1/chat/session")).json()
+        assert body["session_id"] is None
+        assert body["messages"] == []
+        # Reported gone, NOT deleted. The write path owns the retirement.
+        assert db.sessions[0]["deleted_at"] is None
+        assert len(db.sessions) == 1
+    finally:
+        monkeypatch.delenv("CHAT_SESSION_IDLE_SECONDS", raising=False)
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_conversation_is_left_alone(
+    client: AsyncClient, db: FakeConversationDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window is an expiry, not a reaper. Inside it nothing moves."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("CHAT_SESSION_IDLE_SECONDS", "300")
+    get_settings.cache_clear()
+    try:
+        await client.post("/api/v1/chat/messages", json={"message": "hip-hop"})
+        first = db.sessions[0]["id"]
+
+        _age_session(db, seconds=60)
+        await client.post("/api/v1/chat/messages", json={"message": "dark"})
+
+        assert len(db.sessions) == 1
+        assert db.sessions[0]["id"] == first
+        assert (await client.get("/api/v1/chat/session")).json()[
+            "session_id"
+        ] is not None
+    finally:
+        monkeypatch.delenv("CHAT_SESSION_IDLE_SECONDS", raising=False)
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_the_two_doors_get_different_delivery_instructions(
+    client: AsyncClient, db: FakeConversationDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    ONE INTERVIEW, TWO REGISTERS. What to ask is shared — that is what keeps
+    Talk and Chat one assistant — but a 245px panel someone reads and a voice
+    someone listens to are not the same medium.
+
+    `source` already existed for the log line and for sessions.voice_enabled,
+    so this rides in on the wire unchanged.
+    """
+    # Spying on `converse_messages` rather than on `_run_chain`: it is the
+    # public boundary, it is what actually carries the prompt to Bedrock, and
+    # reaching for the private one costs a reportPrivateUsage against a pyright
+    # baseline that has no room in it.
+    #
+    # `_extract` goes through the same call, so the extraction prompt lands
+    # here too and is filtered out by the marker only the interview carries.
+    systems: list[str] = []
+    real_converse = agent.converse_messages
+
+    async def _spy(*, system: str, **kwargs: Any) -> Any:
+        if "THE THREE THAT MATTER" in system:
+            systems.append(system)
+        return await real_converse(system=system, **kwargs)
+
+    monkeypatch.setattr(agent, "converse_messages", _spy)
+
+    await client.post(
+        "/api/v1/chat/messages", json={"message": "hip-hop", "source": "voice"}
+    )
+    await client.post(
+        "/api/v1/chat/messages", json={"message": "hip-hop", "source": "chat"}
+    )
+
+    voice_system, chat_system = systems
+    # The voice door is told it is being HEARD, and told what not to write.
+    assert "SPOKEN ALOUD" in voice_system
+    assert "NO EM-DASHES" in voice_system
+    assert "245px" not in voice_system
+    # The chat door keeps the panel framing and is given no speech rules.
+    assert "245px" in chat_system
+    assert "SPOKEN ALOUD" not in chat_system
+    # Both are still running the same interview.
+    for system in systems:
+        assert "THE THREE THAT MATTER" in system
+        # The brand is written as a word, so the TTS engine says it rather than
+        # spelling it. The voice block names the shouted form once, in the rule
+        # forbidding it, which is why this checks the prose and not the file.
+        assert "Rithm's studio assistant" in system
+        assert "let Rithm pick" in system
+    assert "RITHM" not in chat_system

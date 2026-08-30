@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { useResetChat } from "../../hooks/useChat";
 import { useVoiceSession } from "../../hooks/useVoiceSession";
 import { useAssistant } from "../../store/assistant";
 import AssistantPoster from "../AssistantPoster";
@@ -39,10 +40,15 @@ const ChatPanel = lazy(() => import("./ChatPanel"));
  * It is the pattern the app already teaches, and a second sheet that animates
  * differently reads as a different app.
  *
- * THE "START OVER" CONTROL IS DELIBERATELY ABSENT. `useResetChat`
- * soft-deletes server-side, and a live loop's next POST would then silently
- * create a NEW session — so the reset lives only in `ChatPanel`, where no call
- * can be running beside it.
+ * "START OVER" IS HERE NOW, and the hazard that kept it out is the feature.
+ * It was absent because `useResetChat` soft-deletes server-side and a live
+ * loop's next POST would then open a NEW session — which is precisely what
+ * starting over means. The fork was only a problem when it was accidental.
+ *
+ * It does NOT close the sheet: that is what the scrim and the X are for, and a
+ * control that both wipes the conversation and hangs up is two actions wearing
+ * one button. `voice.restart` re-greets so the avatar opens again instead of
+ * sitting silently on a transcript that no longer exists.
  */
 export default function VoiceSheet() {
   const open = useAssistant((s) => s.sheetOpen);
@@ -53,6 +59,7 @@ export default function VoiceSheet() {
   const mode = useAssistant((s) => s.mode);
 
   const voice = useVoiceSession();
+  const reset = useResetChat();
 
   const onStage = status !== "idle" && status !== "unavailable";
   const failureLine = voiceFailureCopy(failure);
@@ -125,7 +132,7 @@ export default function VoiceSheet() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="AI assistant"
+        aria-label="RIA - Your AI Assistant"
         className={cn(
           "surface absolute inset-x-0 bottom-0 top-8 flex flex-col overflow-y-auto rounded-t-sheet border-t border-white/10 px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-3",
           "transition-transform duration-[420ms] ease-sheet",
@@ -163,6 +170,11 @@ export default function VoiceSheet() {
             suggestions={voice.suggestions}
             onSuggestion={voice.answerSuggestion}
             onEnd={close}
+            onReset={() => {
+              reset.mutate();
+              voice.restart();
+            }}
+            canReset={!reset.isPending}
             onGesture={voice.retryGesture}
             className="w-full"
           />

@@ -38,7 +38,7 @@ export default function VoiceCard({ className = "" }: { className?: string }) {
 
   return (
     <section
-      aria-label="AI assistant"
+      aria-label="RIA - Your AI Assistant"
       className={`ai-frame mt-6 ${className}`}
     >
       <div className="quick-surface relative rounded-card px-4 py-5">

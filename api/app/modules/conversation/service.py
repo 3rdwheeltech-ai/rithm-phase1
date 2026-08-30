@@ -15,6 +15,7 @@ contract lists `app.modules.conversation`).
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ import tiktoken
 from sqlalchemy import text
 from uuid_utils import uuid7
 
+from app.config import get_settings
 from app.modules.conversation.models import (
     MESSAGE_COLUMNS,
     MESSAGES_TABLE,
@@ -75,6 +77,35 @@ def count_tokens(content: str) -> int:
     return len(_encoder.encode(content))
 
 
+def is_idle(session: Session, *, max_idle_seconds: int) -> bool:
+    """
+    Has this conversation sat untouched long enough to be over?
+
+    ONE DEFINITION, TWO CALLERS, and they must behave differently — which is
+    why this is a free function rather than a branch inside `load`.
+
+    `service.start` (the write path) soft-deletes a stale session and opens a
+    fresh one. `GET /chat/session` (the read path) reports a stale session as
+    NO session, and writes nothing: "a bare GET creates nothing" is that
+    route's documented invariant and it holds in both directions.
+
+    Both are needed. Expiring only on write means the user reads a transcript
+    that vanishes the instant they reply to it, which is worse than either
+    keeping it or dropping it consistently.
+
+    `updated_at` rather than the last message's timestamp: the
+    touch_updated_at trigger bumps it on every save_draft, so it already tracks
+    real activity, and reading it costs no second query. A session row with no
+    `updated_at` at all is treated as live — a missing timestamp is not
+    evidence of staleness, and deleting somebody's conversation is not the
+    thing to do on a guess.
+    """
+    if max_idle_seconds <= 0 or session.updated_at is None:
+        return False
+    age = datetime.now(UTC) - session.updated_at
+    return age > timedelta(seconds=max_idle_seconds)
+
+
 class ConversationService:
     # ── Sessions ───────────────────────────────────────────────────────────
 
@@ -119,7 +150,23 @@ class ConversationService:
 
         Called on the first user MESSAGE, never on a bare GET — an abandoned
         chat panel must not litter the table.
+
+        A conversation that has sat untouched past `chat_session_idle_seconds`
+        is retired here before the insert, so the next message starts clean
+        rather than resuming something the user has long since walked away
+        from. The soft delete releases the unique partial index, which is what
+        lets the INSERT below actually take.
         """
+        stale = await self.load(user_id=user_id)
+        if stale is not None and is_idle(
+            stale, max_idle_seconds=get_settings().chat_session_idle_seconds
+        ):
+            logger.info(
+                "chat_session_expired",
+                idle_seconds=get_settings().chat_session_idle_seconds,
+            )
+            await self.soft_delete(session_id=stale.id)
+
         async with get_session("conversation") as session:
             await session.execute(
                 text(

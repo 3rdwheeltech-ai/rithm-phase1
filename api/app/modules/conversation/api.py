@@ -35,7 +35,11 @@ from app.modules.conversation.schemas import (
     SongDraft,
     VoiceSessionResponse,
 )
-from app.modules.conversation.service import conversation_service, count_tokens
+from app.modules.conversation.service import (
+    conversation_service,
+    count_tokens,
+    is_idle,
+)
 from app.shared.auth import require_user
 from app.shared.aws import ConverseMessage
 from app.shared.exceptions import (
@@ -104,6 +108,19 @@ async def get_chat_session(
     """
     settings = get_settings()
     session = await conversation_service.load(user_id=user_id)
+
+    # A conversation that has gone stale reports as NO conversation, and does
+    # so WITHOUT WRITING — this route creates nothing, in either direction.
+    # `service.start` is what actually retires the row, on the next message.
+    #
+    # Both halves are needed. If only the write path expired sessions, the user
+    # would sit reading a transcript that vanished the moment they replied to
+    # it, which is a worse outcome than either keeping it or dropping it.
+    if session is not None and is_idle(
+        session, max_idle_seconds=settings.chat_session_idle_seconds
+    ):
+        session = None
+
     if session is None:
         return ChatSessionResponse(
             session_id=None,
@@ -184,7 +201,7 @@ async def post_chat_message(
     # Raises AssistantUnavailableException when every model refused or the turn
     # ran out of budget. Deliberately NOT caught: the user's message is already
     # committed, so a 503 here loses nothing.
-    result = await agent.run_turn(history=history, draft=draft)
+    result = await agent.run_turn(history=history, draft=draft, voice=voice)
 
     await conversation_service.save_draft(
         session_id=session.id,

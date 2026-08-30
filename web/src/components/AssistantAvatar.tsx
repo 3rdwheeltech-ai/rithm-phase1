@@ -60,7 +60,7 @@ export default function AssistantAvatar({
   const portrait = src ? (
     <img
       src={src}
-      alt="AI assistant avatar"
+      alt="Ria, the AI assistant"
       // `object-top`, not the default centre. The source is 768x1152 and the
       // face sits in the upper half, so a centred square crop would cut the
       // top of her head off and fill the bottom third with hoodie.
