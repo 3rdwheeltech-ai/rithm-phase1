@@ -57,7 +57,10 @@ describe("GenerationPill", () => {
     expect(pill).not.toHaveAttribute("aria-modal");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     // And the wrapper it sits in must not swallow clicks meant for the app.
-    expect(pill.parentElement).toHaveClass("pointer-events-none");
+    // (One level up is BorderGlow's shrink-wrapped ring div; the fixed,
+    // full-width wrapper that actually needs to ignore clicks is the level
+    // above that.)
+    expect(pill.parentElement?.parentElement).toHaveClass("pointer-events-none");
   });
 
   it("reports the phase it is handed", async () => {

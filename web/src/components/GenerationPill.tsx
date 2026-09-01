@@ -1,25 +1,24 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import BorderGlow from "./BorderGlow";
 import { useJobStream } from "../hooks/useJobStream";
 import { fmtElapsed, jobLabel, type PillTone } from "../lib/jobLabel";
 import { useGeneration } from "../store/generation";
-
-// Static-imported, this would drag `ogl` into the entry chunk — GenerationPill
-// is mounted from App.tsx, so it is in that chunk — undoing the deliberate
-// lazy-load in SpecularButton. The aurora is decoration; it can arrive late.
-const SoftAurora = lazy(() => import("./SoftAurora/SoftAurora"));
 
 /** Held for this long on `completed` before the pill retracts. */
 const READY_LINGER_MS = 2_000;
 
 const TONE_DOT: Record<PillTone, string> = {
-  signal: "bg-signal-bright",
+  signal: "bg-amber",
   amber: "bg-amber",
   danger: "bg-danger",
 };
+
+/** The pill's permanent glow — off-white, on regardless of tone or phase. */
+const PILL_GLOW_COLOR = "40 45% 95%";
 
 /**
  * The generation status island.
@@ -115,76 +114,62 @@ export default function GenerationPill() {
     >
       <AnimatePresence>
         {show && rendered && (
-          <motion.div
-            layout
-            initial={{ y: "-160%", opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: "-160%", opacity: 0 }}
-            transition={{ type: "spring", stiffness: 380, damping: 32, mass: 0.7 }}
-            role="status"
-            aria-live="polite"
-            className="pointer-events-auto relative isolate flex max-w-[min(92vw,360px)] items-center gap-2.5 overflow-hidden rounded-full py-2 pl-3.5 pr-3"
-          >
-            {/* Layer 1 — the aurora, clipped to the pill by `overflow-hidden`.
-                Its props are FROZEN for the pill's lifetime: every one of them
-                is in the component's effect deps, so changing one per phase
-                would rebuild the WebGL context mid-generation. */}
-            <div className="absolute inset-0 -z-10 opacity-60" aria-hidden="true">
-              <Suspense fallback={null}>
-                <SoftAurora
-                  speed={0.9}
-                  scale={1.1}
-                  brightness={0.55}
-                  color1="#7DF3E2"
-                  color2="#34E3C8"
-                  bandHeight={0.5}
-                  bandSpread={1.2}
-                  colorSpeed={0.6}
-                  enableMouseInteraction={false}
-                />
-              </Suspense>
-            </div>
+          // BorderGlow sits OUTSIDE the pill's own `overflow-hidden`, on purpose:
+          // that's what lets its ring bleed past the pill's rounded edge instead
+          // of being clipped by it. It's always lit — not tied to `rendered.tone` —
+          // so the pill reads as "on" through every phase, amber underneath it.
+          <BorderGlow glowColor={PILL_GLOW_COLOR} className="pointer-events-auto">
+            <motion.div
+              layout
+              initial={{ y: "-160%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "-160%", opacity: 0 }}
+              transition={{ type: "spring", stiffness: 380, damping: 32, mass: 0.7 }}
+              role="status"
+              aria-live="polite"
+              className="relative isolate flex max-w-[min(92vw,380px)] items-center gap-3 overflow-hidden rounded-full py-3 pl-5 pr-4"
+            >
+              {/* Layer 1 — the glass background. `.lg-regular` is the house tier
+                  for buttons, pills and popovers; only the radius is overridden,
+                  the same way ModeToggle does it. */}
+              <div className="lg-regular absolute inset-0 -z-10 !rounded-full" aria-hidden="true" />
 
-            {/* Layer 2 — the glass over it. `.lg-regular` is the house tier for
-                buttons, pills and popovers; only the radius is overridden, the
-                same way ModeToggle does it. */}
-            <div className="lg-regular absolute inset-0 -z-10 !rounded-full" aria-hidden="true" />
+              {/* Layer 2 — the status itself. */}
+              <span
+                aria-hidden="true"
+                className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${TONE_DOT[rendered.tone]} ${
+                  rendered.terminal ? "" : "motion-safe:animate-pulse"
+                }`}
+              />
 
-            {/* Layer 3 — the status itself. */}
-            <span
-              aria-hidden="true"
-              className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${TONE_DOT[rendered.tone]} ${
-                rendered.terminal ? "" : "motion-safe:animate-pulse"
-              }`}
-            />
-
-            <span className="min-w-0 flex-1 truncate text-sm font-medium leading-none text-ink">
-              {rendered.label}
-            </span>
-
-            {!rendered.terminal && startedAt !== null && (
-              <span className="flex flex-shrink-0 items-center gap-1.5 font-mono text-2xs tabular-nums text-ink-faint">
-                {reconnecting && (
-                  <span
-                    aria-label="Reconnecting"
-                    className="h-1.5 w-1.5 rounded-full bg-amber motion-safe:animate-pulse"
-                  />
-                )}
-                {fmtElapsed(Math.max(0, Math.floor((now - startedAt) / 1000)))}
+              <span className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none text-ink">
+                {rendered.label}
               </span>
-            )}
 
-            {rendered.terminal && rendered.tone !== "signal" && (
-              <button
-                type="button"
-                onClick={dismiss}
-                aria-label="Dismiss"
-                className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-white/[0.08] hover:text-ink"
-              >
-                <X className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-            )}
-          </motion.div>
+              {!rendered.terminal && startedAt !== null && (
+                <span className="flex flex-shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums text-ink-faint">
+                  {reconnecting && (
+                    <span
+                      aria-label="Reconnecting"
+                      className="h-2 w-2 rounded-full bg-amber motion-safe:animate-pulse"
+                    />
+                  )}
+                  {fmtElapsed(Math.max(0, Math.floor((now - startedAt) / 1000)))}
+                </span>
+              )}
+
+              {rendered.terminal && rendered.tone !== "signal" && (
+                <button
+                  type="button"
+                  onClick={dismiss}
+                  aria-label="Dismiss"
+                  className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-white/[0.08] hover:text-ink"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} />
+                </button>
+              )}
+            </motion.div>
+          </BorderGlow>
         )}
       </AnimatePresence>
     </div>,
