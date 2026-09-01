@@ -107,7 +107,7 @@ describe("QuickGenerate suggestions", () => {
 });
 
 describe("QuickGenerate doors", () => {
-  it("offers two doors, labelled Make rather than Vocals", () => {
+  it("offers two doors, labelled Create rather than Vocals", () => {
     renderWithProviders(<QuickGenerate />);
 
     // Three became two: "Generate" and "Instrumental" were never really a
@@ -115,7 +115,7 @@ describe("QuickGenerate doors", () => {
     // mode at all.
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent?.trim());
     expect(tabs).toEqual(["Music", "Write lyrics"]);
-    expect(screen.getByText("Make")).toBeInTheDocument();
+    expect(screen.getByText("Create")).toBeInTheDocument();
     expect(screen.queryByText("Vocals")).not.toBeInTheDocument();
   });
 

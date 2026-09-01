@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ArrowUpRight, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useTracks } from "../hooks/useTracks";
@@ -20,6 +20,26 @@ export default function RecentCreations() {
   // The carousel shows the first page only; Library owns the full list.
   const tracks: TrackSummary[] = data?.pages[0]?.tracks ?? [];
 
+  // Arrows only make sense once there is somewhere to scroll to — hidden at
+  // rest, and hidden again once the track in that direction runs out.
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(true);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+
+    function update() {
+      if (!el) return;
+      setAtStart(el.scrollLeft <= 1);
+      setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+    }
+
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    return () => el.removeEventListener("scroll", update);
+  }, [tracks.length]);
+
   function scrollByCards(dir: 1 | -1) {
     trackRef.current?.scrollBy({ left: dir * 420, behavior: "smooth" });
   }
@@ -29,26 +49,32 @@ export default function RecentCreations() {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-display text-lg font-semibold text-ink">Recent Creations</h2>
         <div className="flex items-center gap-1">
-          <span className="hidden items-center gap-1 [@media(hover:hover)and(pointer:fine)]:flex">
-          <button
-            type="button"
-            onClick={() => scrollByCards(-1)}
-            title="Scroll left"
-            aria-label="Scroll left"
-            className="glass-btn flex h-8 w-8 items-center justify-center rounded-full"
-          >
-            <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollByCards(1)}
-            title="Scroll right"
-            aria-label="Scroll right"
-            className="glass-btn flex h-8 w-8 items-center justify-center rounded-full"
-          >
-            <ChevronRight className="h-4 w-4" strokeWidth={2} />
-          </button>
-          </span>
+          {tracks.length > 0 && (
+            <span className="flex items-center gap-1">
+              {!atStart && (
+                <button
+                  type="button"
+                  onClick={() => scrollByCards(-1)}
+                  title="Scroll left"
+                  aria-label="Scroll left"
+                  className="glass-btn flex h-8 w-8 items-center justify-center rounded-full"
+                >
+                  <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+                </button>
+              )}
+              {!atEnd && (
+                <button
+                  type="button"
+                  onClick={() => scrollByCards(1)}
+                  title="Scroll right"
+                  aria-label="Scroll right"
+                  className="glass-btn flex h-8 w-8 items-center justify-center rounded-full"
+                >
+                  <ChevronRight className="h-4 w-4" strokeWidth={2} />
+                </button>
+              )}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => nav("/library")}

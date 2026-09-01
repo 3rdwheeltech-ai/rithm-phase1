@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Music } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Segmented from "./create/Segmented";
@@ -54,6 +54,13 @@ export default function QuickGenerate() {
   });
 
   const canGenerate = prompt.trim().length > 0 && !busy;
+
+  // A native `disabled` button never dispatches `click`, so this only ever
+  // shows once the transparent overlay below has caught the attempt.
+  const [showStyleHint, setShowStyleHint] = useState(false);
+  useEffect(() => {
+    if (canGenerate) setShowStyleHint(false);
+  }, [canGenerate]);
 
   function onGenerate() {
     if (busy) return;
@@ -111,9 +118,9 @@ export default function QuickGenerate() {
 
           <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              {/* "Make", not "Vocals" — with two doors this row no longer
+              {/* "Create", not "Vocals" — with two doors this row no longer
                   describes vocals, it describes what you get. */}
-              <span className="text-xs font-medium text-ink-muted">Make</span>
+              <span className="text-xs font-medium text-ink-muted">Create</span>
               <Segmented<HomeMode>
                 ariaLabel="What to make"
                 size="sm"
@@ -155,31 +162,56 @@ export default function QuickGenerate() {
           </div>
 
           <div className="mt-5 flex flex-col items-center gap-2">
+            {showStyleHint && (
+              <p className="text-xs text-amber/80">Style is required to generate music.</p>
+            )}
             {/* The rim is the button. `ai-frame-btn` used to draw a static teal
                 hairline here and the two would only fight over the same edge. */}
-            <SpecularButton
-              size="lg"
-              radius={16}
-              tint="#ffffff"
-              tintOpacity={0}
-              blur={5}
-              textColor="#f5f5f5"
-              lineColor={SPECULAR_LINE}
-              baseColor={SPECULAR_BASE}
-              intensity={2.5}
-              shineSize={39}
-              shineFade={32}
-              thickness={2}
-              speed={1.3}
-              followMouse={false}
-              proximity={140}
-              autoAnimate={false}
-              disabled={!canGenerate}
-              onClick={onGenerate}
-              className="w-full max-w-[340px]"
-            >
-              {busy ? "Generating…" : "Generate"}
-            </SpecularButton>
+            <div className="relative w-full max-w-[340px]">
+              <SpecularButton
+                size="lg"
+                radius={16}
+                tint="#ffffff"
+                tintOpacity={0}
+                blur={5}
+                textColor="#f5f5f5"
+                lineColor={SPECULAR_LINE}
+                baseColor={SPECULAR_BASE}
+                intensity={2.5}
+                shineSize={39}
+                shineFade={32}
+                thickness={2}
+                speed={1.3}
+                followMouse={false}
+                proximity={140}
+                autoAnimate={false}
+                disabled={!canGenerate}
+                onClick={onGenerate}
+                className="w-full"
+              >
+                {busy ? "Generating…" : "Generate"}
+              </SpecularButton>
+              {!canGenerate && !busy && (
+                // A disabled <button> never dispatches `click`, so this overlay
+                // is what actually catches the tap and surfaces the hint above.
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Style required to generate music"
+                  className="absolute inset-0 cursor-not-allowed"
+                  onClick={() => {
+                    setShowStyleHint(true);
+                    promptRef.current?.focus();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    setShowStyleHint(true);
+                    promptRef.current?.focus();
+                  }}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>

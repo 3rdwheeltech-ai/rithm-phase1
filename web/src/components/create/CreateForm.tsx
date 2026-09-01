@@ -183,6 +183,7 @@ export default function CreateForm() {
   const cardRef = useRef<HTMLDivElement>(null);
   const lensRef = useLens<HTMLDivElement>("md", 24);
   const specularRef = useSpecular<HTMLDivElement>();
+  const styleRef = useRef<HTMLTextAreaElement>(null);
 
   // Same rule the request body uses below: only Write mode with something in
   // the box counts as user lyrics; everything else leaves the words to the model.
@@ -216,6 +217,13 @@ export default function CreateForm() {
   // dead Create button — the exact complaint this page started with. An empty
   // box sends null, which is the model's own "write the words yourself".
   const canSubmit = prompt.trim().length > 0 && !bpmInvalid && !busy;
+
+  // A native `disabled` button never dispatches `click`, so this only ever
+  // shows once the transparent overlay near the button has caught the attempt.
+  const [showStyleHint, setShowStyleHint] = useState(false);
+  useEffect(() => {
+    if (prompt.trim().length > 0) setShowStyleHint(false);
+  }, [prompt]);
 
   function addInstrument(raw: string) {
     const value = raw.trim().toLowerCase();
@@ -385,6 +393,7 @@ export default function CreateForm() {
     <section className="mb-5">
       <span className={SECTION_LABEL}>Styles</span>
       <textarea
+        ref={styleRef}
         value={prompt}
         maxLength={PROMPT_MAX_LENGTH}
         onChange={(e) => setPrompt(e.target.value)}
@@ -747,30 +756,57 @@ export default function CreateForm() {
       )}
 
       <div className="flex flex-col items-center gap-2">
+        {showStyleHint && (
+          <p className="text-xs text-amber/80">Style is required to generate music.</p>
+        )}
         {/* Same treatment as Home's Generate — the two are the same action. */}
-        <SpecularButton
-          size="lg"
-          radius={16}
-          tint="#ffffff"
-          tintOpacity={0}
-          blur={5}
-          textColor="#f5f5f5"
-          lineColor={SPECULAR_LINE}
-          baseColor={SPECULAR_BASE}
-          intensity={2.5}
-          shineSize={39}
-          shineFade={32}
-          thickness={2}
-          speed={1.3}
-          followMouse={false}
-          proximity={140}
-          autoAnimate={false}
-          disabled={!canSubmit}
-          onClick={onCreate}
-          className="w-full max-w-[340px]"
-        >
-          {busy ? "Creating…" : "Create"}
-        </SpecularButton>
+        <div className="relative w-full max-w-[340px]">
+          <SpecularButton
+            size="lg"
+            radius={16}
+            tint="#ffffff"
+            tintOpacity={0}
+            blur={5}
+            textColor="#f5f5f5"
+            lineColor={SPECULAR_LINE}
+            baseColor={SPECULAR_BASE}
+            intensity={2.5}
+            shineSize={39}
+            shineFade={32}
+            thickness={2}
+            speed={1.3}
+            followMouse={false}
+            proximity={140}
+            autoAnimate={false}
+            disabled={!canSubmit}
+            onClick={onCreate}
+            className="w-full"
+          >
+            {busy ? "Creating…" : "Create"}
+          </SpecularButton>
+          {prompt.trim().length === 0 && !busy && (
+            // A disabled <button> never dispatches `click`, so this overlay is
+            // what actually catches the tap and surfaces the hint above. Only
+            // for the empty-style case — a bad BPM range disables the button
+            // too, but that isn't what this hint is about.
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="Style required to generate music"
+              className="absolute inset-0 cursor-not-allowed"
+              onClick={() => {
+                setShowStyleHint(true);
+                styleRef.current?.focus();
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                setShowStyleHint(true);
+                styleRef.current?.focus();
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
