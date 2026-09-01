@@ -213,15 +213,13 @@ export default function AvatarPanel({
       // Named, like ChatPanel beside it. A `<section>` only becomes a landmark
       // once it has an accessible name, and the two doors should be the same
       // shape to assistive tech as they are to the eye.
-      aria-label="RIA - Your AI Assistant"
+      aria-label="RIA"
       className={`lg-lens relative flex flex-col items-center overflow-hidden p-4 ${className}`}
       style={{ "--r": "24px", "--pad": "16px" } as React.CSSProperties}
     >
-      {/* Named, not labelled. "AI Assistant" described a category; this is
-          the same someone the avatar shows and the voice speaks as. */}
-      <span className="mb-3 self-start eyebrow truncate">
-        RIA - Your AI Assistant
-      </span>
+      {/* Named, not labelled — the same someone the avatar shows and the
+          voice speaks as. */}
+      <span className="mb-3 self-start eyebrow truncate">RIA</span>
 
       {/* Same row of the panel as in ChatPanel — see DoorToggle. */}
       <DoorToggle className="mb-3 flex w-full shrink-0 justify-center" />

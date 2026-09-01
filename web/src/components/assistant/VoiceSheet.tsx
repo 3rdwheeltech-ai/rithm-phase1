@@ -132,7 +132,7 @@ export default function VoiceSheet() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="RIA - Your AI Assistant"
+        aria-label="RIA"
         className={cn(
           "surface absolute inset-x-0 bottom-0 top-8 flex flex-col overflow-y-auto rounded-t-sheet border-t border-white/10 px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-3",
           "transition-transform duration-[420ms] ease-sheet",
